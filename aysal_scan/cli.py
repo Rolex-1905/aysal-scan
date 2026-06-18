@@ -240,7 +240,7 @@ def ui() -> None:
     try:
         import questionary
     except ImportError:
-        console.print("[red]Run: pip install aysal-scan[ui][/red]")
+        console.print("[red]Run: pip install aysal-scan\\[ui][/red]")
         raise typer.Exit(1)
 
     console.print()
