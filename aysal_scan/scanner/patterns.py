@@ -164,11 +164,7 @@ PATTERNS: list[SecretPattern] = [
             r'\s*[:=]\s*["\']?([A-Za-z0-9\-._~]{32,})["\']?'
         ),
         default_severity=Severity.HIGH,
-        requires_context=True,
-        context_keywords=[
-            "azure", "AZURE", "client_secret", "clientSecret",
-            "CLIENT_SECRET", "tenant", "TENANT",
-        ],
+        requires_context=False,
         value_group=1,
     ),
 ]

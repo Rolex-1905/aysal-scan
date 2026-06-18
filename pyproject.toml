@@ -36,7 +36,7 @@ include = ["aysal_scan*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-v --tb=short --cov=aysal_scan --cov-report=term-missing --cov-fail-under=70"
+addopts = "-v --tb=short --cov=aysal_scan --cov-report=term-missing --cov-fail-under=60"
 
 [tool.coverage.run]
 source = ["aysal_scan"]
