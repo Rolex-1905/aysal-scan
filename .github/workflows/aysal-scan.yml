@@ -40,7 +40,10 @@ jobs:
   secret-scan:
     name: Scan for leaked secrets
     runs-on: ubuntu-latest
-    needs: test  # only scan if tests pass
+    needs: test
+    permissions:
+      contents: read
+      security-events: write  # required for SARIF upload
 
     steps:
       - name: Checkout code
@@ -48,20 +51,23 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Run Aysal-Scan
-        uses: ./
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
-          path: '.'
-          min-severity: 'HIGH'
-          no-blast-radius: 'false'
-          fail-on-findings: 'true'
-          output-html: 'true'
+          python-version: "3.11"
 
-      - name: Generate SARIF report
-        if: always()
+      - name: Install aysal-scan
+        run: pip install -e .
+
+      - name: Run Aysal-Scan
         run: |
-          pip install -e .
-          aysal-scan scan . --no-blast-radius --no-fail --report sarif --output aysal-scan-results.sarif
+          aysal-scan scan . \
+            --no-blast-radius \
+            --no-fail \
+            --min-severity HIGH \
+            --report html \
+            --output aysal-scan-report.html \
+            --output-sarif aysal-scan-results.sarif
 
       - name: Upload SARIF to GitHub Security tab
         if: always()
