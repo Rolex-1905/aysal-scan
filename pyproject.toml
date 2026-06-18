@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "aysal-scan"
-version = "0.1.0"
+version = "0.1.1"
 description = "Scan git repos for leaked secrets and estimate their blast radius"
 requires-python = ">=3.11"
 dependencies = [
