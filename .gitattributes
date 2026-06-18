@@ -1,0 +1,23 @@
+# Normalize all text files to LF on commit
+* text=auto eol=lf
+
+# Explicitly force shell scripts to LF (Windows editors often use CRLF)
+*.sh text eol=lf
+
+# Force Python files to LF
+*.py text eol=lf
+
+# Force YAML/TOML to LF
+*.yml text eol=lf
+*.yaml text eol=lf
+*.toml text eol=lf
+
+# Force Dockerfile to LF
+Dockerfile text eol=lf
+
+# Binary files — no line ending conversion
+*.png binary
+*.jpg binary
+*.gif binary
+*.zip binary
+*.gz binary

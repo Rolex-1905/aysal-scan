@@ -1,0 +1,79 @@
+name: Aysal-Scan CI
+
+on:
+  push:
+    branches: [ main, master, develop ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  test:
+    name: Tests + coverage
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
+
+      - name: Run tests with coverage
+        run: |
+          pytest --cov=aysal_scan --cov-report=term-missing --cov-report=xml --cov-fail-under=70
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage.xml
+          retention-days: 14
+
+  secret-scan:
+    name: Scan for leaked secrets
+    runs-on: ubuntu-latest
+    needs: test  # only scan if tests pass
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run Aysal-Scan
+        uses: ./
+        with:
+          path: '.'
+          min-severity: 'HIGH'
+          no-blast-radius: 'false'
+          fail-on-findings: 'true'
+          output-html: 'true'
+
+      - name: Generate SARIF report
+        if: always()
+        run: |
+          pip install -e .
+          aysal-scan scan . --no-blast-radius --no-fail --report sarif --output aysal-scan-results.sarif
+
+      - name: Upload SARIF to GitHub Security tab
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: aysal-scan-results.sarif
+          category: aysal-scan
+
+      - name: Upload HTML Report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: aysal-scan-report
+          path: aysal-scan-report.html
+          retention-days: 30

@@ -1,0 +1,11 @@
+# Test files contain intentional fake keys for testing purposes
+tests/test_cli.py
+tests/test_patterns.py
+tests/test_entropy.py
+tests/test_git_utils.py
+
+# README contains example keys for documentation only
+README.md
+
+# Source files that trigger false positives from pattern keyword matching
+aysal_scan/blast_radius/__init__.py

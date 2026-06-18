@@ -1,0 +1,17 @@
+- id: aysal-scan
+  name: Aysal-Scan — detect leaked secrets
+  description: Scans staged changes for leaked secrets and estimates blast radius
+  entry: aysal-scan scan --staged --no-blast-radius
+  language: python
+  pass_filenames: false
+  always_run: true
+  stages: [pre-commit]
+
+- id: aysal-scan-with-blast-radius
+  name: Aysal-Scan — detect leaked secrets (with blast radius)
+  description: Scans staged changes and checks if found secrets are still active
+  entry: aysal-scan scan --staged
+  language: python
+  pass_filenames: false
+  always_run: true
+  stages: [pre-commit]

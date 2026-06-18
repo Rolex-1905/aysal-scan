@@ -1,0 +1,41 @@
+name: 'Aysal-Scan'
+description: 'Scan for leaked secrets and estimate blast radius'
+author: 'Rolex-1905'
+
+inputs:
+  path:
+    description: 'Path to scan'
+    required: false
+    default: '.'
+  min-severity:
+    description: 'Minimum severity to report (CRITICAL/HIGH/MEDIUM/LOW/INFO)'
+    required: false
+    default: 'HIGH'
+  no-blast-radius:
+    description: 'Skip blast radius checks (faster, offline)'
+    required: false
+    default: 'false'
+  fail-on-findings:
+    description: 'Fail the workflow if secrets are found'
+    required: false
+    default: 'true'
+  output-html:
+    description: 'Generate HTML report artifact'
+    required: false
+    default: 'true'
+
+outputs:
+  findings-count:
+    description: 'Total number of secrets found'
+  report-path:
+    description: 'Path to the HTML report'
+  sarif-path:
+    description: 'Path to the SARIF report'
+
+runs:
+  using: 'docker'
+  image: 'docker://ghcr.io/rolex-1905/aysal-scan:latest'
+
+branding:
+  icon: 'shield'
+  color: 'red'
