@@ -77,7 +77,7 @@ PATTERNS: list[SecretPattern] = [
     ),
     SecretPattern(
         secret_type=SecretType.SLACK_BOT,
-        pattern=re.compile(r'xoxb-[0-9]{11}-[0-9]{11}-[a-zA-Z0-9]{24}'),
+        pattern=re.compile(r'xoxb-[0-9]{6,14}-[0-9]{6,14}-[a-zA-Z0-9]{16,32}'),
         default_severity=Severity.HIGH,
     ),
     SecretPattern(

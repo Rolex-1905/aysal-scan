@@ -10,6 +10,28 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [1.0.1] — 2026-06-19
+
+Patch fixes folded into the v1.0.0 release tag (package version bumped
+to 1.0.1 because 1.0.0 was already published to PyPI before these fixes
+landed - PyPI never allows reusing a version number).
+
+### Fixed
+- JWT tokens were producing up to 4 findings instead of 1 — the entropy
+  fallback's tokenizer split JWTs on their dot separators, and the
+  resulting fragments didn't match the JWT pattern in isolation. Fixed
+  with span-overlap detection between named-pattern matches and entropy
+  tokens on the same line.
+- Slack bot token regex required exactly 11-digit ID segments; real
+  tokens vary 6-14 digits per segment and were silently missed.
+- `AysalScanignore` didn't cover `tests/conftest.py`,
+  `tests/test_blast_radius.py`, or `tests/test_blast_radius_checkers.py`,
+  causing the tool to flag its own test fixtures on self-scan.
+- Removed unused `PyGithub` dependency — never imported anywhere in the
+  codebase.
+
+---
+
 ## [1.0.0] — 2026-06-19
 
 First production-ready release. Builds on 0.1.0 with critical correctness

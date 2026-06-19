@@ -266,8 +266,10 @@ def scan_content(
     for line_no, line in enumerate(lines, start=1):
 
         # ── Regex-pattern matching ──────────────────────────────────────────
+        matched_spans: list[tuple[int, int]] = []  # character spans claimed by named patterns
         for pat in PATTERNS:
             for match in pat.pattern.finditer(line):
+                matched_spans.append(match.span())
                 value = match.group(pat.value_group)
 
                 # Context-keyword gate for noisy patterns (Twilio, Heroku, generic)
@@ -331,14 +333,24 @@ def scan_content(
                 ))
 
         # ── Shannon entropy fallback ────────────────────────────────────────
-        for token in re.findall(r'[A-Za-z0-9+/=_\-]{20,}', line):
+        for ent_match in re.finditer(r'[A-Za-z0-9+/=_\-]{20,}', line):
+            token = ent_match.group(0)
             if not is_high_entropy_secret(token):
                 continue
             secret_id = _make_id(token)
             if secret_id in seen_ids:
                 continue
-            # Skip tokens already caught by a named pattern
-            if any(pat.pattern.search(token) for pat in PATTERNS):
+            # Skip if this entropy token's character span overlaps ANY span
+            # already claimed by a named pattern on this line. Substring
+            # comparison alone misses cases like "TOKEN=eyJ..." where the
+            # entropy regex's char class (includes "=") swallows a variable
+            # name prefix that the named pattern's match doesn't include —
+            # span overlap catches this regardless of prefix/suffix noise.
+            tok_start, tok_end = ent_match.span()
+            if any(
+                not (tok_end <= s or tok_start >= e)
+                for (s, e) in matched_spans
+            ):
                 continue
             seen_ids.add(secret_id)
             raw_values[secret_id] = token

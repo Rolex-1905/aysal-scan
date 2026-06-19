@@ -9,3 +9,8 @@ README.md
 
 # Source files that trigger false positives from pattern keyword matching
 aysal_scan/blast_radius/__init__.py
+
+# Test fixtures and shared mocks with intentional fake secrets
+tests/conftest.py
+tests/test_blast_radius.py
+tests/test_blast_radius_checkers.py
