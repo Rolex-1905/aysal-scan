@@ -15,7 +15,11 @@ _SARIF_LEVEL = {
 }
 
 
-def generate_sarif_report(report: ScanReport, output_path: Path) -> None:
+def generate_sarif_report(
+    report: ScanReport,
+    output_path: Path,
+    baseline_fingerprints: set[str] | None = None,
+) -> None:
     rules = {}
     results = []
 
@@ -74,6 +78,11 @@ def generate_sarif_report(report: ScanReport, output_path: Path) -> None:
             "fingerprints": {
                 "aysal-scan/v1": finding.id
             },
+            "baselineState": (
+                "unchanged"
+                if baseline_fingerprints and finding.id in baseline_fingerprints
+                else "new"
+            ),
         }
 
         # Add extra locations if the secret appears in multiple files

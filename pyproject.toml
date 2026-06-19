@@ -4,9 +4,12 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "aysal-scan"
-version = "0.1.1"
+version = "1.0.0"
 description = "Scan git repos for leaked secrets and estimate their blast radius"
 requires-python = ">=3.11"
+authors = [
+    { name = "Neeraj Mudunuru" },
+]
 dependencies = [
     "typer>=0.12.0,<1.0.0",
     "rich>=13.7.0,<15.0.0",
@@ -50,3 +53,8 @@ exclude_lines = [
     "except ImportError",
     "pass",
 ]
+
+[project.urls]
+Homepage = "https://github.com/Rolex-1905/aysal-scan"
+Repository = "https://github.com/Rolex-1905/aysal-scan"
+LinkedIn = "https://www.linkedin.com/in/neeraj-mudunuru-79130a29a/"

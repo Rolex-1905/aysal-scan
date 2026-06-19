@@ -35,7 +35,7 @@ class BaseChecker(ABC):
                 # Retry if we got a retryable HTTP status (checker must set check_error)
                 if (
                     result.check_error
-                    and any(str(code) in result.check_error for code in self.RETRY_CODES)
+                    and any(f"HTTP {code}" in result.check_error for code in self.RETRY_CODES)
                     and attempt < self.MAX_RETRIES - 1
                 ):
                     wait = 2 ** attempt  # 1s, 2s, 4s

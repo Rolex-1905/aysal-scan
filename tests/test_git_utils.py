@@ -90,7 +90,7 @@ class TestScanCommits:
         repo = _init_repo(tmp_path)
         _commit(repo, "creds.env", "STRIPE_KEY=" + "sk" + "_live_" + "a"*24 + "\n", "add creds")
         try:
-            findings, raw, files, commits = scan_commits(tmp_path, n_commits=1)
+            findings, raw, files, commits, _ = scan_commits(tmp_path, n_commits=1)
             assert any("Stripe" in f.secret_type.value for f in findings)
         finally:
             _close(repo)
@@ -100,7 +100,7 @@ class TestScanCommits:
         repo = _init_repo(tmp_path)
         _commit(repo, "readme.md", "# hello", "root commit")
         try:
-            findings, raw, files, commits = scan_commits(tmp_path)
+            findings, raw, files, commits, _ = scan_commits(tmp_path)
             assert isinstance(findings, list)
         finally:
             _close(repo)
@@ -110,7 +110,7 @@ class TestScanCommits:
         for i in range(5):
             _commit(repo, f"file{i}.txt", f"content {i}", f"commit {i}")
         try:
-            _, _, _, commits_scanned = scan_commits(tmp_path, n_commits=3)
+            _, _, _, commits_scanned, _ = scan_commits(tmp_path, n_commits=3)
             assert commits_scanned == 3
         finally:
             _close(repo)
@@ -126,7 +126,7 @@ class TestScanCommits:
         repo.index.commit("remove creds")
         try:
             # Scan only the deletion commit — added lines = nothing, deleted lines skipped
-            findings, _, _, _ = scan_commits(tmp_path, n_commits=1)
+            findings, _, _, _, _ = scan_commits(tmp_path, n_commits=1)
             assert findings == []
         finally:
             _close(repo)
@@ -137,7 +137,7 @@ class TestScanCommits:
         _commit(repo, "a.env", "TOKEN=" + "sk" + "_live_" + "a"*24 + "\n", "first")
         _commit(repo, "b.env", "TOKEN=" + "sk" + "_live_" + "a"*24 + "\n", "second")
         try:
-            findings, _, _, _ = scan_commits(tmp_path)
+            findings, _, _, _, _ = scan_commits(tmp_path)
             stripe_findings = [f for f in findings if "Stripe" in f.secret_type.value]
             assert len(stripe_findings) == 1
         finally:
@@ -145,6 +145,6 @@ class TestScanCommits:
 
     def test_scan_commits_finds_secret(self, fake_git_repo_with_secret):
         from aysal_scan.scanner.git_utils import scan_commits
-        findings, _, _, commits_scanned = scan_commits(fake_git_repo_with_secret, n_commits=5)
+        findings, _, _, commits_scanned, _ = scan_commits(fake_git_repo_with_secret, n_commits=5)
         assert commits_scanned >= 1
         assert any(f.secret_type == SecretType.STRIPE_SECRET for f in findings)

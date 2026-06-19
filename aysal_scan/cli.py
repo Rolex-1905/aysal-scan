@@ -2,6 +2,7 @@ import sys
 import shutil
 import subprocess
 import tempfile
+import json as _json
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -45,15 +46,29 @@ def _filter_by_min_severity(findings: list[Finding], min_severity: str) -> list[
     return [f for f in findings if SEVERITY_ORDER.index(f.severity) <= cutoff]
 
 
+def _load_sarif_fingerprints(sarif_path: Optional[str]) -> set[str]:
+    """Read fingerprints from a previous SARIF file for baseline comparison."""
+    if not sarif_path:
+        return set()
+    try:
+        data = _json.loads(Path(sarif_path).read_text(encoding="utf-8"))
+        fps: set[str] = set()
+        for run in data.get("runs", []):
+            for result in run.get("results", []):
+                fp = result.get("fingerprints", {}).get("aysal-scan/v1")
+                if fp:
+                    fps.add(fp)
+        return fps
+    except Exception:
+        return set()
+
+
 def _resolve_target(path: str, full_history: bool = False) -> tuple[Path, bool]:
     """
     If path looks like a GitHub/GitLab URL, clone it to a temp directory.
     Respects full_history flag — skips --depth limit when full history is needed.
     Returns (local_path, is_temp).
     """
-    # Only treat as a remote URL if it has a network scheme or git@ prefix.
-    # DO NOT use path.endswith(".git") alone — bare local repos are named *.git
-    # and would be mistakenly cloned as remote URLs.
     is_git_url = path.startswith((
         "https://github.com", "http://github.com",
         "git@github.com",
@@ -64,7 +79,6 @@ def _resolve_target(path: str, full_history: bool = False) -> tuple[Path, bool]:
     if is_git_url:
         tmp = tempfile.mkdtemp(prefix="aysal-scan-")
         console.print(f"[cyan]Cloning[/cyan] {path} …")
-        # Only use --depth when not scanning full history
         depth_args = [] if full_history else ["--depth=100"]
         result = subprocess.run(
             ["git", "clone"] + depth_args + [path, tmp],
@@ -91,6 +105,9 @@ def _run_scan(
     output_sarif: Optional[str],
     min_severity: str,
     no_fail: bool,
+    allow_list: str = "",
+    sarif_baseline: Optional[str] = None,
+    verbose: bool = False,
 ) -> None:
     findings: list[Finding] = []
     raw_values: dict[str, str] = {}
@@ -111,17 +128,19 @@ def _run_scan(
 
         elif mode == "full_history":
             task = progress.add_task("[cyan]Scanning full git history…", total=None)
-            findings, raw_values, files_scanned, commits_scanned = scan_commits(
+            findings, raw_values, files_scanned, commits_scanned, partial_history = scan_commits(
                 target, n_commits=None
             )
             progress.update(task, description=f"[cyan]History scan complete — {commits_scanned} commit(s), {files_scanned} file change(s)")
 
         elif mode == "commits" and commits:
             task = progress.add_task(f"[cyan]Scanning last {commits} commit(s)…", total=None)
-            findings, raw_values, files_scanned, commits_scanned = scan_commits(
+            findings, raw_values, files_scanned, commits_scanned, partial_history = scan_commits(
                 target, n_commits=commits
             )
             progress.update(task, description=f"[cyan]Done — {commits_scanned} commit(s), {files_scanned} file change(s)")
+            if partial_history:
+                console.print(f"[yellow]⚠ Warning: only the last {commits_scanned} commit(s) were scanned. Use --full-history to scan everything.[/yellow]")
 
         elif target.is_file():
             task = progress.add_task(f"[cyan]Scanning {target.name}…", total=None)
@@ -136,13 +155,17 @@ def _run_scan(
 
         findings = deduplicate(findings)
 
+        if allow_list.strip():
+            suppressed_ids = {s.strip() for s in allow_list.split(",") if s.strip()}
+            findings = [f for f in findings if f.id not in suppressed_ids]
+
         if not no_blast_radius and findings:
             task2 = progress.add_task(
                 f"[yellow]Checking blast radius for {len(findings)} finding(s)…",
                 total=None,
             )
             findings = run_blast_radius_concurrent(findings, raw_values)
-            progress.update(task2, description=f"[yellow]Blast radius checks complete")
+            progress.update(task2, description="[yellow]Blast radius checks complete")
 
     # Compute totals BEFORE filtering so the report shows the true picture
     total_critical = _count_by_severity(findings, Severity.CRITICAL)
@@ -155,7 +178,6 @@ def _run_scan(
     # Filter AFTER computing totals — displayed findings respect --min-severity
     findings = _filter_by_min_severity(findings, min_severity)
 
-    # Annotate scan_target with the active filter so output is self-documenting
     scan_target = str(target)
     if min_severity.upper() != "INFO":
         scan_target += f" [min-severity: {min_severity.upper()}]"
@@ -187,10 +209,11 @@ def _run_scan(
         console.print(f"\n[green]HTML report saved to:[/green] {out_path}")
     elif fmt == "sarif":
         out_path = Path(output) if output else Path("aysal-scan-results.sarif")
-        generate_sarif_report(report, out_path)
+        baseline_fps = _load_sarif_fingerprints(sarif_baseline)
+        generate_sarif_report(report, out_path, baseline_fingerprints=baseline_fps)
         console.print(f"\n[green]SARIF report saved to:[/green] {out_path}")
     else:
-        print_report(report)
+        print_report(report, verbose=verbose)
 
     # Additional output formats (can be combined with any primary format)
     if output_json and fmt != "json":
@@ -198,7 +221,8 @@ def _run_scan(
         console.print(f"[green]JSON report saved to:[/green] {output_json}")
 
     if output_sarif and fmt != "sarif":
-        generate_sarif_report(report, Path(output_sarif))
+        baseline_fps = _load_sarif_fingerprints(sarif_baseline)
+        generate_sarif_report(report, Path(output_sarif), baseline_fingerprints=baseline_fps)
         console.print(f"[green]SARIF report saved to:[/green] {output_sarif}")
 
     if not no_fail and not report.passed:
@@ -218,6 +242,9 @@ def scan(
     output_sarif: Optional[str] = typer.Option(None, "--output-sarif", help="Also save a SARIF report to this path"),
     min_severity: str = typer.Option("HIGH", "--min-severity", help="Minimum severity to report: CRITICAL|HIGH|MEDIUM|LOW|INFO  [default: HIGH]"),
     no_fail: bool = typer.Option(False, "--no-fail", help="Always exit 0 even if secrets found"),
+    allow_list: str = typer.Option("", "--allow-list", help="Comma-separated finding IDs to suppress (get IDs from JSON report)"),
+    sarif_baseline: Optional[str] = typer.Option(None, "--sarif-baseline", help="Path to a previous SARIF file — existing findings marked unchanged, only new ones alert"),
+    verbose: bool = typer.Option(False, "--verbose", "-V", help="Show detailed blast radius check results including errors and raw checker output"),
 ) -> None:
     """Scan a path, file, or GitHub/GitLab URL for leaked secrets."""
     target, is_temp = _resolve_target(path, full_history=full_history)
@@ -228,7 +255,7 @@ def scan(
         else "directory"
     )
     try:
-        _run_scan(target, mode, commits, no_blast_radius, format, output, output_json, output_sarif, min_severity, no_fail)
+        _run_scan(target, mode, commits, no_blast_radius, format, output, output_json, output_sarif, min_severity, no_fail, allow_list, sarif_baseline, verbose)
     finally:
         if is_temp:
             shutil.rmtree(target, ignore_errors=True)
@@ -262,7 +289,7 @@ def ui() -> None:
         raise typer.Exit(0)
 
     target = Path(".").resolve()
-    raw_scan_path = None          # set to a string when the user enters a URL
+    raw_scan_path = None
     commits_n = None
     is_full_history = scan_mode == "Full git history"
 
@@ -271,10 +298,9 @@ def ui() -> None:
         if not path_input:
             raise typer.Exit(0)
         path_input = path_input.strip()
-        # URLs must NOT be wrapped in Path() — Windows mangles https:// → https:\
         if path_input.startswith(("https://", "http://", "git@")):
-            raw_scan_path = path_input          # keep as plain string
-            target = Path(".")                  # placeholder, overridden below
+            raw_scan_path = path_input
+            target = Path(".")
         else:
             raw_scan_path = None
             target = Path(path_input).resolve()
@@ -336,7 +362,7 @@ def ui() -> None:
             "CRITICAL only", "HIGH and above", "MEDIUM and above",
             "LOW and above", "Everything (INFO)",
         ],
-        default="HIGH and above",  # sane default — INFO floods output
+        default="HIGH and above",
     ).ask()
     sev_map = {
         "CRITICAL only": "CRITICAL",
@@ -355,35 +381,35 @@ def ui() -> None:
     console.print(f"  [bold cyan]Severity :[/bold cyan]  {min_severity} and above")
     console.print()
 
-    # No confirmation prompt — user already made all choices above.
-    # Jump straight into the scan.
-    while True:
-        target, is_temp = _resolve_target(raw_scan_path if raw_scan_path else str(target), full_history=is_full_history)
-        try:
+    # Resolve (clone if remote) ONCE, before the loop. "Rescan same target"
+    # then reuses the same local clone instead of re-cloning every time.
+    target, is_temp = _resolve_target(raw_scan_path if raw_scan_path else str(target), full_history=is_full_history)
+    try:
+        while True:
             _run_scan(target, mode, commits_n, no_blast_radius, fmt, output_path, None, None, min_severity, no_fail=True)
-        finally:
-            if is_temp:
-                shutil.rmtree(target, ignore_errors=True)
 
-        # After scan completes, offer rescan or exit
-        console.print()
-        action = questionary.select(
-            "What would you like to do next?",
-            choices=[
-                "Rescan same target",
-                "Start a new scan",
-                "Exit",
-            ],
-        ).ask()
+            # After scan completes, offer rescan or exit
+            console.print()
+            action = questionary.select(
+                "What would you like to do next?",
+                choices=[
+                    "Rescan same target",
+                    "Start a new scan",
+                    "Exit",
+                ],
+            ).ask()
 
-        if action is None or action == "Exit":
-            console.print("[dim]Goodbye.[/dim]")
-            break
-        elif action == "Start a new scan":
-            # Restart the interactive UI from scratch
-            ui()
-            break
-        # "Rescan same target" — loop continues with same settings
+            if action is None or action == "Exit":
+                console.print("[dim]Goodbye.[/dim]")
+                break
+            elif action == "Start a new scan":
+                # Restart the interactive UI from scratch
+                ui()
+                break
+            # "Rescan same target" — loop continues, reusing the same local path
+    finally:
+        if is_temp:
+            shutil.rmtree(target, ignore_errors=True)
 
 
 @app.callback(invoke_without_command=True)

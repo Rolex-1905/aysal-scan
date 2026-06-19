@@ -13,7 +13,7 @@ import threading
 from pathlib import Path
 
 from aysal_scan.models import Finding, SecretType, Severity
-from aysal_scan.scanner.entropy import is_high_entropy_secret
+from aysal_scan.scanner.entropy import is_high_entropy_secret, shannon_entropy
 from aysal_scan.scanner.patterns import PATTERNS, GENERIC_DUMMY_VALUES
 
 # ---------------------------------------------------------------------------
@@ -281,6 +281,12 @@ def scan_content(
                         continue
                     # Skip strings that are too repetitive (e.g. "aaaaaaaa")
                     if len(set(value.lower())) < 4:
+                        continue
+                    # GENERIC catches free-form values (password=, secret=, etc).
+                    # Real secrets are high-entropy; plain English words like
+                    # "localhost" or "development" are not. Require a minimum
+                    # entropy floor so dictionary-word env values are skipped.
+                    if pat.secret_type == SecretType.GENERIC and shannon_entropy(value) < 2.8:
                         continue
 
                 secret_id = _make_id(value)

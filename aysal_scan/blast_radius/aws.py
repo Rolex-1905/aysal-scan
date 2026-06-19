@@ -39,17 +39,35 @@ class AWSChecker(BaseChecker):
             arn = identity.get("Arn", "unknown")
             user_name = arn.split("/")[-1] if "/" in arn else arn
 
-            # Try to list attached policies
+            # Try to list all policies: user-attached, group-attached, and inline
             permissions: list[str] = []
             try:
                 iam = session.client("iam")
-                policies = iam.list_attached_user_policies(UserName=user_name)
-                for p in policies.get("AttachedPolicies", []):
+
+                # 1. Directly attached user policies
+                user_policies = iam.list_attached_user_policies(UserName=user_name)
+                for p in user_policies.get("AttachedPolicies", []):
                     permissions.append(p["PolicyName"])
+
+                # 2. Inline user policies
+                inline = iam.list_user_policies(UserName=user_name)
+                for name in inline.get("PolicyNames", []):
+                    permissions.append(f"{name} (inline)")
+
+                # 3. Group-attached policies (the most common missed case)
+                groups = iam.list_groups_for_user(UserName=user_name)
+                for group in groups.get("Groups", []):
+                    gname = group["GroupName"]
+                    group_policies = iam.list_attached_group_policies(GroupName=gname)
+                    for p in group_policies.get("AttachedPolicies", []):
+                        label = f"{p['PolicyName']} (via group: {gname})"
+                        if label not in permissions:
+                            permissions.append(label)
+
             except Exception:
                 permissions = ["Could not enumerate — insufficient IAM permissions"]
 
-            is_admin = "AdministratorAccess" in permissions
+            is_admin = any("AdministratorAccess" in p for p in permissions)
 
             return BlastRadiusResult(
                 is_active=True,

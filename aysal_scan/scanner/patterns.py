@@ -23,6 +23,9 @@ GENERIC_DUMMY_VALUES: frozenset[str] = frozenset({
     "todo", "fixme", "xxx", "abc123", "foobar", "enter_password",
     "enter_secret", "put_here", "goes_here", "add_here", "<secret>",
     "<password>", "<api_key>", "supersecret", "topsecret",
+    "localhost", "development", "production", "staging", "local",
+    "default", "username", "root", "guest", "demo", "sandbox",
+    "my-database-name", "mydb", "myapp", "true", "false", "debug",
 })
 
 

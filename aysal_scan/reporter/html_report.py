@@ -1,4 +1,4 @@
-"""HTML report generator for GitHub Actions artifacts and local viewing."""
+"""HTML report generator — collapsible findings, severity filter, copy-to-clipboard."""
 from __future__ import annotations
 import html as _html
 
@@ -19,10 +19,8 @@ def _finding_html(f) -> str:
     br = f.blast_radius
 
     def e(val) -> str:
-        """HTML-escape a value safely."""
         return _html.escape(str(val)) if val is not None else ""
 
-    # Extra locations block
     extra_locs_html = ""
     if f.locations:
         items = ""
@@ -41,7 +39,6 @@ def _finding_html(f) -> str:
           <ul>{items}</ul>
         </div>"""
 
-    # Blast radius block
     br_html = ""
     if br and br.check_performed:
         if br.is_active is True:
@@ -67,7 +64,7 @@ def _finding_html(f) -> str:
 
     remediation_html = ""
     if br and br.remediation:
-        remediation_html = f'<div class="remediation"><strong>Fix:</strong> {e(br.remediation)}</div>'
+        remediation_html = f'<div class="remediation"><strong>Fix:</strong><pre>{e(br.remediation)}</pre></div>'
 
     commit_html = ""
     if f.commit_hash:
@@ -78,17 +75,31 @@ def _finding_html(f) -> str:
         )
 
     line_str = f' (line {f.line_number})' if f.line_number else ''
+    finding_id = e(f.id)
+    masked = e(f.masked_value)
+
     return f"""
-    <div class="finding" style="border-left:4px solid {color}">
-      <div class="finding-header" style="color:{color}">
+    <div class="finding" data-severity="{e(f.severity.value)}" style="border-left:4px solid {color}">
+      <div class="finding-header" onclick="toggleFinding(this)" style="color:{color}">
+        <span class="toggle-icon">▼</span>
         [{e(f.severity.value)}] {e(f.secret_type.value)}
+        <span class="finding-meta">{e(f.file_path)}{line_str}</span>
       </div>
-      <p><strong>File:</strong> {e(f.file_path)}{line_str}</p>
-      {commit_html}
-      <p><strong>Secret:</strong> <code>{e(f.masked_value)}</code></p>
-      {extra_locs_html}
-      {br_html}
-      {remediation_html}
+      <div class="finding-body">
+        <p><strong>File:</strong> {e(f.file_path)}{line_str}</p>
+        {commit_html}
+        <p>
+          <strong>Secret:</strong> <code id="secret-{finding_id}">{masked}</code>
+          <button class="copy-btn" onclick="copyText('secret-{finding_id}', this)">Copy</button>
+        </p>
+        <p>
+          <strong>Finding ID:</strong> <code id="id-{finding_id}">{finding_id}</code>
+          <button class="copy-btn" onclick="copyText('id-{finding_id}', this)" title="Use with --allow-list to suppress">Copy ID</button>
+        </p>
+        {extra_locs_html}
+        {br_html}
+        {remediation_html}
+      </div>
     </div>"""
 
 
@@ -115,22 +126,45 @@ def generate_html_report(report: ScanReport, output_path: Path) -> None:
   .summary table {{ border-collapse: collapse; width: 100%; }}
   .summary td {{ padding: 0.35rem 0.75rem; }}
   .summary td:first-child {{ color: #6b7280; font-weight: 500; width: 160px; }}
-  .finding {{ background: #fff; border-radius: 8px; padding: 1rem 1.5rem;
-              margin-bottom: 1rem; box-shadow: 0 1px 3px rgba(0,0,0,.1); }}
-  .finding-header {{ font-size: 1.1rem; font-weight: 700; margin-bottom: .75rem; }}
+  .filters {{ margin-bottom: 1rem; display: flex; gap: .5rem; flex-wrap: wrap; align-items: center; }}
+  .filters span {{ font-weight: 500; color: #374151; margin-right: .25rem; }}
+  .filter-btn {{ padding: .35rem .9rem; border-radius: 9999px; border: 2px solid #d1d5db;
+                 background: #fff; cursor: pointer; font-size: .875rem; font-weight: 500;
+                 transition: all .15s; }}
+  .filter-btn.active {{ background: #1e293b; color: #fff; border-color: #1e293b; }}
+  .filter-btn[data-sev="CRITICAL"].active {{ background:#dc2626; border-color:#dc2626; }}
+  .filter-btn[data-sev="HIGH"].active {{ background:#d97706; border-color:#d97706; }}
+  .filter-btn[data-sev="MEDIUM"].active {{ background:#ca8a04; border-color:#ca8a04; }}
+  .filter-btn[data-sev="LOW"].active {{ background:#2563eb; border-color:#2563eb; }}
+  .filter-btn[data-sev="INFO"].active {{ background:#6b7280; border-color:#6b7280; }}
+  .finding {{ background: #fff; border-radius: 8px;
+              margin-bottom: .75rem; box-shadow: 0 1px 3px rgba(0,0,0,.1); overflow: hidden; }}
+  .finding-header {{ font-size: 1rem; font-weight: 700; padding: .85rem 1.25rem;
+                     cursor: pointer; user-select: none; display: flex; align-items: center; gap: .5rem; }}
+  .finding-header:hover {{ background: #f8fafc; }}
+  .finding-meta {{ margin-left: auto; font-size: .8rem; font-weight: 400; color: #6b7280; }}
+  .toggle-icon {{ font-size: .75rem; transition: transform .2s; }}
+  .finding-header.collapsed .toggle-icon {{ transform: rotate(-90deg); }}
+  .finding-body {{ padding: .75rem 1.5rem 1rem; border-top: 1px solid #f1f5f9; }}
+  .finding-body.hidden {{ display: none; }}
   .blast-radius {{ background: #fef2f2; border-radius: 6px; padding: .75rem 1rem; margin: .75rem 0; }}
   .blast-radius h4 {{ margin: 0 0 .5rem; }}
   .blast-radius ul {{ margin: .25rem 0; padding-left: 1.25rem; }}
   .also-in {{ background: #fffbeb; border-radius: 6px; padding: .75rem 1rem; margin: .75rem 0; }}
   .also-in ul {{ margin: .25rem 0; padding-left: 1.25rem; }}
   .remediation {{ background: #f0fdf4; border-radius: 6px; padding: .75rem 1rem; margin: .75rem 0; }}
+  .remediation pre {{ margin: .25rem 0 0; font-size: .85rem; white-space: pre-wrap; }}
   .error {{ color: #dc2626; font-size: .875rem; }}
   code {{ background: #f1f5f9; padding: 2px 6px; border-radius: 4px; font-family: monospace; }}
+  .copy-btn {{ margin-left: .5rem; padding: 2px 8px; font-size: .75rem; border-radius: 4px;
+               border: 1px solid #d1d5db; background: #f8fafc; cursor: pointer; }}
+  .copy-btn:hover {{ background: #e2e8f0; }}
   .verdict {{ text-align: center; padding: 1rem; border-radius: 8px; font-size: 1.25rem;
               font-weight: 700; margin-top: 1.5rem; }}
   .passed {{ background: #dcfce7; color: #16a34a; }}
   .failed {{ background: #fee2e2; color: #dc2626; }}
   .no-findings {{ color: #16a34a; font-size: 1.1rem; }}
+  .hidden {{ display: none; }}
 </style>
 </head>
 <body>
@@ -150,9 +184,54 @@ def generate_html_report(report: ScanReport, output_path: Path) -> None:
   </table>
 </div>
 
+<div class="filters">
+  <span>Filter:</span>
+  <button class="filter-btn active" data-sev="ALL" onclick="filterFindings('ALL', this)">All</button>
+  <button class="filter-btn" data-sev="CRITICAL" onclick="filterFindings('CRITICAL', this)">🔴 Critical</button>
+  <button class="filter-btn" data-sev="HIGH" onclick="filterFindings('HIGH', this)">🟠 High</button>
+  <button class="filter-btn" data-sev="MEDIUM" onclick="filterFindings('MEDIUM', this)">🟡 Medium</button>
+  <button class="filter-btn" data-sev="LOW" onclick="filterFindings('LOW', this)">🔵 Low</button>
+  <button class="filter-btn" data-sev="INFO" onclick="filterFindings('INFO', this)">⚪ Info</button>
+  <button class="filter-btn" data-sev="ALL" onclick="collapseAll()" style="margin-left:auto">Collapse All</button>
+  <button class="filter-btn" data-sev="ALL" onclick="expandAll()">Expand All</button>
+</div>
+
 {findings_html}
 
 <div class="verdict {verdict_class}">{verdict_text}</div>
+
+<script>
+  function toggleFinding(header) {{
+    header.classList.toggle('collapsed');
+    header.nextElementSibling.classList.toggle('hidden');
+  }}
+  function filterFindings(sev, btn) {{
+    document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    document.querySelectorAll('.finding').forEach(f => {{
+      f.classList.toggle('hidden', sev !== 'ALL' && f.dataset.severity !== sev);
+    }});
+  }}
+  function collapseAll() {{
+    document.querySelectorAll('.finding-header').forEach(h => {{
+      h.classList.add('collapsed');
+      h.nextElementSibling.classList.add('hidden');
+    }});
+  }}
+  function expandAll() {{
+    document.querySelectorAll('.finding-header').forEach(h => {{
+      h.classList.remove('collapsed');
+      h.nextElementSibling.classList.remove('hidden');
+    }});
+  }}
+  function copyText(id, btn) {{
+    const text = document.getElementById(id).textContent;
+    navigator.clipboard.writeText(text).then(() => {{
+      btn.textContent = 'Copied!';
+      setTimeout(() => btn.textContent = btn.textContent.includes('ID') ? 'Copy ID' : 'Copy', 1500);
+    }});
+  }}
+</script>
 </body>
 </html>"""
 

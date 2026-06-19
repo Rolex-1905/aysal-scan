@@ -29,6 +29,8 @@ htmlcov/
 # Tool output
 aysal-scan-report.html
 aysal-scan-report.json
+aysal-scan-results.sarif
+coverage.xml
 
 # IDE
 .vscode/

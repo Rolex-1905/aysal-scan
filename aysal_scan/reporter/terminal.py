@@ -31,7 +31,7 @@ def _short_path(path: str, maxlen: int = 60) -> str:
     return ("…" + path[-(maxlen - 1):]) if len(path) > maxlen else path
 
 
-def print_finding(f: Finding) -> None:
+def print_finding(f: Finding, verbose: bool = False) -> None:
     color = _SEVERITY_COLORS[f.severity]
     icon = _SEVERITY_ICONS[f.severity]
     title = f"{icon} [{f.severity.value}] {f.secret_type.value}"
@@ -85,6 +85,9 @@ def print_finding(f: Finding) -> None:
             lines.append(f"    Resource    : {res}")
         if br.check_error:
             lines.append(f"    [bold yellow]⚠ Check error :[/bold yellow] [yellow]{br.check_error}[/yellow]")
+        if verbose:
+            lines.append(f"    [dim]check_performed : {br.check_performed}[/dim]")
+            lines.append(f"    [dim]is_active       : {br.is_active}[/dim]")
         if br.risk_summary:
             lines.append(f"    [italic]{br.risk_summary}[/italic]")
 
@@ -101,7 +104,7 @@ def print_finding(f: Finding) -> None:
                         border_style=color, expand=False))
 
 
-def print_report(report: ScanReport) -> None:
+def print_report(report: ScanReport, verbose: bool = False) -> None:
     console.rule("[bold blue]Aysal-Scan Results[/bold blue]")
     console.print()
 
@@ -131,7 +134,7 @@ def print_report(report: ScanReport) -> None:
         return
 
     for finding in report.findings:
-        print_finding(finding)
+        print_finding(finding, verbose=verbose)
         console.print()
 
     verdict_color = "green" if report.passed else "red"

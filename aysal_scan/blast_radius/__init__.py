@@ -5,6 +5,7 @@ provider-specific checker and runs all checks concurrently.
 from __future__ import annotations
 
 import concurrent.futures
+import time
 
 from aysal_scan.models import BlastRadiusResult, Finding, SecretType, Severity
 from aysal_scan.blast_radius.aws import AWSChecker
@@ -71,13 +72,21 @@ def run_blast_radius(finding: Finding, raw_value: str) -> Finding:
 def run_blast_radius_concurrent(
     findings: list[Finding],
     raw_values: dict[str, str],
-    max_workers: int = 6,
+    max_workers: int = 3,
 ) -> list[Finding]:
     if not findings:
         return findings
 
-    def _check_one(f: Finding) -> Finding:
-        return run_blast_radius(f, raw_values.get(f.id, ""))
+    results: list[Finding] = [None] * len(findings)  # type: ignore[list-item]
+
+    def _check_one(idx_and_finding: tuple[int, Finding]) -> tuple[int, Finding]:
+        idx, f = idx_and_finding
+        # Stagger submissions: 0.5s apart so providers don't see a burst
+        time.sleep(idx * 0.5)
+        return idx, run_blast_radius(f, raw_values.get(f.id, ""))
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as ex:
-        return list(ex.map(_check_one, findings))
+        for idx, result in ex.map(_check_one, enumerate(findings)):
+            results[idx] = result
+
+    return results

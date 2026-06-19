@@ -17,8 +17,7 @@ from pathlib import Path
 import git
 
 from aysal_scan.models import Finding
-from aysal_scan.scanner.file_scanner import scan_content
-
+from aysal_scan.scanner.file_scanner import scan_content, _should_skip, load_ignore_patterns_for_root
 
 def scan_staged(repo_path: Path) -> tuple[list[Finding], dict[str, str], int]:
     """
@@ -27,6 +26,7 @@ def scan_staged(repo_path: Path) -> tuple[list[Finding], dict[str, str], int]:
     """
     try:
         repo = git.Repo(repo_path)
+        load_ignore_patterns_for_root(repo_path)
 
         # Step 1 — get list of staged (added/modified) file paths via git directly.
         # --diff-filter=ACMRT excludes deletions so we never try to scan removed files.
@@ -69,7 +69,7 @@ def scan_staged(repo_path: Path) -> tuple[list[Finding], dict[str, str], int]:
 def scan_commits(
     repo_path: Path,
     n_commits: int | None = None,
-) -> tuple[list[Finding], dict[str, str], int, int]:
+) -> tuple[list[Finding], dict[str, str], int, int, bool]:
     """
     Scan git history by diffing each commit against its parent (added lines only).
 
@@ -80,9 +80,16 @@ def scan_commits(
     """
     try:
         repo = git.Repo(repo_path)
-        commits = list(repo.iter_commits())
-        if n_commits is not None:
-            commits = commits[:n_commits]
+        import time
+        _git_start = time.monotonic()
+        _GIT_TIME_BUDGET = 120  # seconds — safety valve for huge histories
+        all_commits = []
+        for c in repo.iter_commits():
+            all_commits.append(c)
+            if time.monotonic() - _git_start > _GIT_TIME_BUDGET:
+                break
+        partial_history = n_commits is not None and len(all_commits) > n_commits
+        commits = all_commits[:n_commits] if n_commits is not None else all_commits
 
         all_findings: list[Finding] = []
         all_raw_values: dict[str, str] = {}
@@ -120,6 +127,8 @@ def scan_commits(
                         continue
 
                     file_path = d.b_path or d.a_path or "unknown"
+                    if _should_skip(Path(file_path)):
+                        continue
                     findings, raw_values = scan_content(
                         added_lines,
                         file_path,
@@ -134,7 +143,7 @@ def scan_commits(
                 except Exception:
                     continue
 
-        return all_findings, all_raw_values, files_changed, len(commits)
+        return all_findings, all_raw_values, files_changed, len(commits), partial_history
 
     except Exception:
-        return [], {}, 0, 0
+        return [], {}, 0, 0, False

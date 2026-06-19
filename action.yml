@@ -1,6 +1,6 @@
 name: 'Aysal-Scan'
 description: 'Scan for leaked secrets and estimate blast radius'
-author: 'Rolex-1905'
+author: 'Neeraj Mudunuru'
 
 inputs:
   path:

@@ -1,11 +1,17 @@
 # 🔐 Aysal-Scan
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.1.0-blue?style=flat-square" />
+  <img src="https://img.shields.io/badge/version-1.0.0-blue?style=flat-square" />
   <img src="https://img.shields.io/badge/python-3.11+-blue?style=flat-square&logo=python&logoColor=white" />
   <img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" />
   <img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey?style=flat-square" />
   <img src="https://img.shields.io/badge/CI%2FCD-GitHub%20Actions-2088FF?style=flat-square&logo=github-actions&logoColor=white" />
+</p>
+
+<p align="center">
+  <a href="https://www.linkedin.com/in/neeraj-mudunuru-79130a29a/">
+    <img src="https://img.shields.io/badge/Author-Neeraj%20Mudunuru-0A66C2?style=flat-square&logo=linkedin&logoColor=white" />
+  </a>
 </p>
 
 <p align="center">
@@ -118,6 +124,9 @@ aysal-scan scan . --report html --output report.html   # HTML report
 aysal-scan scan . --min-severity HIGH                  # HIGH and CRITICAL only
 aysal-scan scan . --no-blast-radius                    # skip API checks (offline)
 aysal-scan scan . --no-fail                            # always exit 0
+aysal-scan scan . --allow-list <id1>,<id2>             # suppress known findings by ID
+aysal-scan scan . --verbose                            # show detailed blast radius debug output
+aysal-scan scan . --report sarif --sarif-baseline old.sarif  # only alert on genuinely new findings
 ```
 
 ---
@@ -137,6 +146,8 @@ aysal-scan scan . --no-fail                            # always exit 0
 | Slack Webhook URL | Regex | Probe → active/inactive check |
 | npm Token | Regex | `registry.npmjs.org/-/whoami` |
 | PyPI Token | Regex | Manual review (no safe verify endpoint) |
+| GCP Service Account JSON | JSON structure | Auto CRITICAL (project ID + client email parsed) |
+| Azure Client Secret | Context-aware regex | Manual review (tenant ID required to verify) |
 | Heroku API Key | Regex | `/account` → email + app access |
 | Google API Key | Regex | Probe enabled APIs |
 | JWT Token | Regex | Decode header + expiry check |
@@ -169,7 +180,7 @@ steps:
       fetch-depth: 0
 
   - name: Aysal-Scan Secret Scan
-    uses: Rolex-1905/aysal-scan@v0.1.0
+    uses: Rolex-1905/aysal-scan@v1.0.0
     with:
       path: '.'
       min-severity: 'HIGH'
@@ -201,7 +212,7 @@ steps:
 ```yaml
 repos:
   - repo: https://github.com/Rolex-1905/aysal-scan
-    rev: v0.1.0
+    rev: v1.0.0
     hooks:
       - id: aysal-scan               # fast — no API calls, offline safe
 ```
@@ -211,7 +222,7 @@ repos:
 ```yaml
 repos:
   - repo: https://github.com/Rolex-1905/aysal-scan
-    rev: v0.1.0
+    rev: v1.0.0
     hooks:
       - id: aysal-scan-with-blast-radius
 ```
@@ -288,7 +299,7 @@ aysal_scan/
 │   ├── git_utils.py          # Git history, staged, commit scanning
 │   └── deduplicator.py       # Deduplicate across commits
 ├── blast_radius/
-│   ├── aws.py                # AWS IAM checks via STS
+│   ├── aws.py                # AWS IAM checks via STS (user, group, inline policies)
 │   ├── github.py             # GitHub API scope check
 │   ├── openai_checker.py     # OpenAI key validation
 │   ├── stripe.py             # Stripe balance check
@@ -297,14 +308,19 @@ aysal_scan/
 │   ├── twilio.py             # Twilio account check
 │   ├── sendgrid.py           # SendGrid scope list
 │   ├── npm.py                # npm whoami
+│   ├── pypi.py                # PyPI — flags for manual review (no safe verify endpoint)
 │   ├── heroku.py             # Heroku account check
 │   ├── google.py             # Google API probe
+│   ├── gcp.py                 # GCP Service Account JSON parsing
+│   ├── azure.py                # Azure Client Secret — manual review
 │   ├── jwt_checker.py        # JWT decode + expiry
+│   ├── base.py                 # Retry/backoff wrapper shared by all checkers
 │   └── generic.py            # Fallback for unknown types
 └── reporter/
     ├── terminal.py           # Rich-formatted terminal output
     ├── json_report.py        # JSON output for CI
-    └── html_report.py        # HTML report artifact
+    ├── html_report.py        # Interactive HTML report (collapsible, filterable)
+    └── sarif_report.py        # SARIF 2.1.0 for GitHub Security tab
 ```
 
 ---
@@ -324,3 +340,9 @@ Built with **Python 3.11+** ·
 ## License
 
 MIT © 2026 Aysal-Scan
+
+---
+
+<p align="center">
+  Built by <a href="https://www.linkedin.com/in/neeraj-mudunuru-79130a29a/"><b>Neeraj Mudunuru</b></a>
+</p>
