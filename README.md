@@ -1,11 +1,19 @@
 # 🔐 Aysal-Scan
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-1.0.1-blue?style=flat-square" />
-  <img src="https://img.shields.io/badge/python-3.11+-blue?style=flat-square&logo=python&logoColor=white" />
-  <img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" />
+  <a href="https://github.com/Rolex-1905/aysal-scan/releases">
+    <img src="https://img.shields.io/badge/version-1.0.1-blue?style=flat-square" />
+  </a>
+  <a href="https://www.python.org/downloads/">
+    <img src="https://img.shields.io/badge/python-3.11+-blue?style=flat-square&logo=python&logoColor=white" />
+  </a>
+  <a href="https://github.com/Rolex-1905/aysal-scan/blob/main/LICENSE">
+    <img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" />
+  </a>
   <img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey?style=flat-square" />
-  <img src="https://img.shields.io/badge/CI%2FCD-GitHub%20Actions-2088FF?style=flat-square&logo=github-actions&logoColor=white" />
+  <a href="https://github.com/Rolex-1905/aysal-scan/actions">
+    <img src="https://img.shields.io/badge/CI%2FCD-GitHub%20Actions-2088FF?style=flat-square&logo=github-actions&logoColor=white" />
+  </a>
 </p>
 
 <p align="center">
@@ -38,6 +46,39 @@
 | **Severity score with blast radius** | ❌ | ✅ |
 | **Scan any GitHub URL directly** | ❌ | ✅ |
 | **Interactive UI mode** | ❌ | ✅ |
+
+---
+
+## Architecture
+
+```mermaid
+flowchart TD
+    A1[Local directory] --> DE
+    A2[Git history] --> DE
+    A3[GitHub URL] --> DE
+    A4[Staged changes] --> DE
+    DE["🔍 Detection engine
+    Regex · 17+ patterns · Shannon entropy"]
+    DE --> DD["Deduplication
+    SHA-256 per raw value"]
+    DD --> BR["💥 Blast radius engine
+    Live API verify · Permission enumeration
+    AWS · GitHub · OpenAI · Stripe · Slack · Twilio +12"]
+    BR --> SS["Severity scoring + remediation
+    CRITICAL → HIGH → MEDIUM → LOW"]
+    SS --> O1[Terminal / Rich UI]
+    SS --> O2[SARIF output]
+    SS --> O3[JSON / HTML]
+    style DE fill:#7F77DD,color:#fff,stroke:#534AB7
+    style DD fill:#888780,color:#fff,stroke:#5F5E5A
+    style BR fill:#D85A30,color:#fff,stroke:#993C1D
+    style SS fill:#1D9E75,color:#fff,stroke:#0F6E56
+    style O1 fill:#888780,color:#fff,stroke:#5F5E5A
+    style O2 fill:#888780,color:#fff,stroke:#5F5E5A
+    style O3 fill:#888780,color:#fff,stroke:#5F5E5A
+```
+
+> **Note:** Live verification applies to most providers (AWS, GitHub, OpenAI, Stripe, Slack, Twilio, npm, SendGrid, Heroku, Google). PyPI, Azure, and GCP are flagged for manual review instead — no safe verify endpoint, no tenant ID available, and avoiding audit-log noise, respectively.
 
 ---
 
