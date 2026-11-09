@@ -48,7 +48,7 @@ class TestAWSChecker:
         mock_iam.list_attached_user_policies.return_value = {
             "AttachedPolicies": [{"PolicyName": "AdministratorAccess"}]
         }
-        mock_session.client.side_effect = lambda name: mock_sts if name == "sts" else mock_iam
+        mock_session.client.side_effect = lambda name, **kw: mock_sts if name == "sts" else mock_iam
 
         result = AWSChecker().check("AKIAEXAMPLE:secretkeyvalue1234567890")
         assert result.is_active is True
@@ -183,17 +183,37 @@ class TestJWTChecker:
         assert result.is_active is False
         assert "EXPIRED" in result.risk_summary
 
-    def test_valid_token_with_future_expiry(self):
+    def test_valid_token_with_future_expiry_is_unverifiable_not_active(self):
         token = self._make_jwt({"sub": "user1", "exp": int(time.time()) + 3600})
         result = JWTChecker().check(token)
-        assert result.is_active is True
+        # A signature cannot be verified from the token alone, so validity is UNKNOWN.
+        assert result.is_active is None
+        assert result.check_performed is True
         assert "still valid" in result.risk_summary.lower()
+        assert result.suggested_severity is None
 
-    def test_token_with_no_expiry_treated_as_active(self):
+    def test_token_with_no_expiry_is_unverifiable_not_active(self):
         token = self._make_jwt({"sub": "user1"})
         result = JWTChecker().check(token)
-        assert result.is_active is True
+        assert result.is_active is None
         assert "no expiry" in result.risk_summary.lower()
+
+    def test_expired_token_suggests_low_severity(self):
+        token = self._make_jwt({"sub": "u", "exp": int(time.time()) - 10})
+        assert JWTChecker().check(token).suggested_severity.value == "LOW"
+
+    def test_public_anon_role_suggests_low_severity(self):
+        token = self._make_jwt({"iss": "supabase", "role": "anon", "exp": int(time.time()) + 10**8})
+        result = JWTChecker().check(token)
+        assert result.suggested_severity.value == "LOW"
+        assert "public" in result.risk_summary.lower()
+
+    def test_attacker_controlled_claims_are_sanitised(self):
+        evil = "\x1b]8;;https://evil.example\x07click\x1b]8;;\x07" + "A" * 500
+        token = self._make_jwt({"iss": evil, "sub": "u"})
+        result = JWTChecker().check(token)
+        assert "\x1b" not in result.risk_summary and "\x07" not in result.account_info
+        assert len(result.account_info) < 200
 
     def test_wrong_segment_count_not_parsed(self):
         """A string with the wrong number of dot-separated segments fails the

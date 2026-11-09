@@ -1,9 +1,13 @@
+from __future__ import annotations
+
 import httpx
+
 from aysal_scan.blast_radius.base import BaseChecker
 from aysal_scan.models import BlastRadiusResult
 
 
 class NpmChecker(BaseChecker):
+    PROVIDER = "npm"
 
     def check(self, secret_value: str) -> BlastRadiusResult:
         try:
@@ -12,39 +16,24 @@ class NpmChecker(BaseChecker):
                 headers={"Authorization": f"Bearer {secret_value}"},
                 timeout=self.TIMEOUT,
             )
+            early = self.classify_status(self.status_of(resp), inactive=(401, 403))
+            if early is not None:
+                return early
 
-            if resp.status_code in (401, 403):
-                return BlastRadiusResult(
-                    is_active=False,
-                    check_performed=True,
-                    risk_summary="npm token is invalid or revoked.",
-                    remediation="Remove from git history.",
-                )
-
-            username = resp.json().get("username", "unknown")
-
+            username = self.json_or_empty(resp).get("username", "unknown")
             return BlastRadiusResult(
-                is_active=True,
-                check_performed=True,
+                is_active=True, check_performed=True,
                 account_info=f"npm user: {username}",
-                permissions=["Publish packages under this account"],
+                permissions=["Valid token (npm does not expose whether it can publish)"],
                 risk_summary=(
-                    f"ACTIVE npm token for user '{username}'. "
-                    "Can publish malicious packages to npm registry."
+                    f"ACTIVE npm token for user '{username}'. If it has publish rights it can "
+                    "push malicious versions of this user's packages (supply-chain risk)."
                 ),
-                remediation=(
-                    "1. Go to npmjs.com → Account → Access Tokens\n"
-                    "2. Revoke this token immediately\n"
-                    "3. Audit recent publishes for tampering\n"
-                    "4. Remove from git history with: git filter-repo"
-                ),
+                privilege="write",
             )
-
         except Exception as e:
             return BlastRadiusResult(
-                is_active=None,
-                check_performed=True,
-                check_error=str(e),
+                is_active=None, check_performed=True, check_error=str(e),
                 risk_summary="Could not verify token. Treat as active.",
                 remediation="Manually revoke at npmjs.com/settings/tokens.",
             )

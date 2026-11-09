@@ -74,6 +74,15 @@ def _finding_html(f) -> str:
             + '</p>'
         )
 
+    risk_html = ""
+    if f.risk_score is not None:
+        factors = "".join(f"<li>{e(x)}</li>" for x in f.risk_factors)
+        tags = " ".join(f'<span class="tag">{e(t)}</span>' for t in f.tags)
+        risk_html = (
+            f'<p><strong>Risk score:</strong> {int(f.risk_score)}/100 {tags}</p>'
+            f'<details><summary>Why this score?</summary><ul>{factors}</ul></details>'
+        )
+
     line_str = f' (line {f.line_number})' if f.line_number else ''
     finding_id = e(f.id)
     masked = e(f.masked_value)
@@ -96,6 +105,7 @@ def _finding_html(f) -> str:
           <strong>Finding ID:</strong> <code id="id-{finding_id}">{finding_id}</code>
           <button class="copy-btn" onclick="copyText('id-{finding_id}', this)" title="Use with --allow-list to suppress">Copy ID</button>
         </p>
+        {risk_html}
         {extra_locs_html}
         {br_html}
         {remediation_html}
@@ -107,7 +117,16 @@ def generate_html_report(report: ScanReport, output_path: Path) -> None:
     verdict_class = "passed" if report.passed else "failed"
     verdict_text = "✓ PASSED" if report.passed else "✗ FAILED — secrets detected"
 
-    findings_html = "\n".join(_finding_html(f) for f in report.findings)
+    ordered = sorted(
+        report.findings,
+        key=lambda x: (x.severity.rank, -(x.risk_score or 0), x.file_path, x.line_number or 0),
+    )
+    findings_html = "\n".join(_finding_html(f) for f in ordered)
+    warn_row = ""
+    if report.warnings:
+        items = "<br>".join(_html.escape(w) for w in report.warnings)
+        warn_row = f'<tr><td>Warnings</td><td style="color:#b45309">{items}</td></tr>'
+    skipped_row = f"<tr><td>Files skipped</td><td>{int(report.files_skipped)}</td></tr>" if report.files_skipped else ""
     if not findings_html:
         findings_html = '<p class="no-findings">✓ No secrets found.</p>'
 
@@ -142,6 +161,8 @@ def generate_html_report(report: ScanReport, output_path: Path) -> None:
   .finding-header {{ font-size: 1rem; font-weight: 700; padding: .85rem 1.25rem;
                      cursor: pointer; user-select: none; display: flex; align-items: center; gap: .5rem; }}
   .finding-header:hover {{ background: #f8fafc; }}
+  .tag {{ background:#eef2ff; color:#3730a3; border-radius:4px; padding:1px 6px; font-size:.72rem; margin-left:4px; }}
+  details {{ font-size:.85rem; margin:.3rem 0 .6rem; }}
   .finding-meta {{ margin-left: auto; font-size: .8rem; font-weight: 400; color: #6b7280; }}
   .toggle-icon {{ font-size: .75rem; transition: transform .2s; }}
   .finding-header.collapsed .toggle-icon {{ transform: rotate(-90deg); }}
@@ -171,10 +192,12 @@ def generate_html_report(report: ScanReport, output_path: Path) -> None:
 <h1>🔐 Aysal-Scan Report</h1>
 <div class="summary">
   <table>
-    <tr><td>Tool version</td><td>{report.tool_version}</td></tr>
-    <tr><td>Scan target</td><td>{report.scan_target}</td></tr>
-    <tr><td>Scan time</td><td>{report.scan_time}</td></tr>
+    <tr><td>Tool version</td><td>{_html.escape(str(report.tool_version))}</td></tr>
+    <tr><td>Scan target</td><td>{_html.escape(str(report.scan_target))}</td></tr>
+    <tr><td>Scan time</td><td>{_html.escape(str(report.scan_time))}</td></tr>
     <tr><td>Files scanned</td><td>{report.files_scanned}</td></tr>
+    {skipped_row}
+    {warn_row}
     <tr><td>Commits scanned</td><td>{report.commits_scanned}</td></tr>
     <tr><td>Critical</td><td><strong style="color:#dc2626">{report.total_critical}</strong></td></tr>
     <tr><td>High</td><td><strong style="color:#d97706">{report.total_high}</strong></td></tr>
@@ -226,13 +249,25 @@ def generate_html_report(report: ScanReport, output_path: Path) -> None:
   }}
   function copyText(id, btn) {{
     const text = document.getElementById(id).textContent;
-    navigator.clipboard.writeText(text).then(() => {{
+    const original = btn.dataset.label || (btn.dataset.label = btn.textContent);
+    const done = () => {{
       btn.textContent = 'Copied!';
-      setTimeout(() => btn.textContent = btn.textContent.includes('ID') ? 'Copy ID' : 'Copy', 1500);
-    }});
+      setTimeout(() => btn.textContent = original, 1500);
+    }};
+    const fallback = () => {{
+      const ta = document.createElement('textarea');
+      ta.value = text; document.body.appendChild(ta); ta.select();
+      try {{ document.execCommand('copy'); done(); }} catch (e) {{ btn.textContent = 'Copy failed'; }}
+      document.body.removeChild(ta);
+    }};
+    if (navigator.clipboard && navigator.clipboard.writeText) {{
+      navigator.clipboard.writeText(text).then(done, fallback);
+    }} else {{ fallback(); }}
   }}
 </script>
 </body>
 </html>"""
 
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(html, encoding="utf-8")

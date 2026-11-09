@@ -1,389 +1,236 @@
-# 🔐 Aysal-Scan
+# Aysal-Scan 🔐
 
-<p align="center">
-  <a href="https://github.com/Rolex-1905/aysal-scan/releases">
-    <img src="https://img.shields.io/badge/version-1.0.1-blue?style=flat-square" />
-  </a>
-  <a href="https://www.python.org/downloads/">
-    <img src="https://img.shields.io/badge/python-3.11+-blue?style=flat-square&logo=python&logoColor=white" />
-  </a>
-  <a href="https://github.com/Rolex-1905/aysal-scan/blob/main/LICENSE">
-    <img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" />
-  </a>
-  <img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey?style=flat-square" />
-  <a href="https://github.com/Rolex-1905/aysal-scan/actions">
-    <img src="https://img.shields.io/badge/CI%2FCD-GitHub%20Actions-2088FF?style=flat-square&logo=github-actions&logoColor=white" />
-  </a>
-</p>
+> **A**nalyze **Y**our **S**ecrets **A**nd **L**eaks — find leaked credentials in git repositories, check which ones are still live, and score how urgent each leak is.
 
-<p align="center">
-  <a href="https://www.linkedin.com/in/neeraj-mudunuru-79130a29a/">
-    <img src="https://img.shields.io/badge/Author-Neeraj%20Mudunuru-0A66C2?style=flat-square&logo=linkedin&logoColor=white" />
-  </a>
-</p>
+[![CI](https://github.com/Rolex-1905/aysal-scan/actions/workflows/aysal-scan.yml/badge.svg)](https://github.com/Rolex-1905/aysal-scan/actions/workflows/aysal-scan.yml)
+[![PyPI](https://img.shields.io/pypi/v/aysal-scan)](https://pypi.org/project/aysal-scan/)
+[![Python](https://img.shields.io/pypi/pyversions/aysal-scan)](https://pypi.org/project/aysal-scan/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-<p align="center">
-  <b>Detect leaked secrets in your git repos — and find out exactly what damage they can cause.</b>
-</p>
+Aysal-Scan finds secrets (API keys, tokens, private keys, connection strings), and then answers the
+questions that decide what you do next:
 
-<p align="center">
-  Every other tool tells you <b>"you have a leaked key."</b><br/>
-  Aysal-Scan tells you <b>"you have a leaked AWS key — it has AdministratorAccess on your production account. Here's how to fix it."</b>
-</p>
+| Question | How Aysal-Scan answers it |
+|---|---|
+| Is the credential still live? | Read-only provider API checks (opt-out with `--no-blast-radius`) |
+| What can it do? | Privilege level (admin / write / read) from the provider's response |
+| Is it still in my code, or only in history? | `in_head` flag from a HEAD comparison |
+| How long has it been exposed? | First-introducing commit date |
+| What should I do about it? | Provider-specific revoke steps + history clean-up |
+| What first? | A 0–100 **risk score** with every contributing factor listed |
 
----
+## Where it fits (honest positioning)
 
-## The Difference
-
-| Feature | TruffleHog / GitLeaks | **Aysal-Scan** |
-|:---|:---:|:---:|
-| Regex-based detection | ✅ | ✅ |
-| Shannon entropy analysis | ✅ | ✅ |
-| Git history scanning | ✅ | ✅ |
-| **Is the key still active?** | ❌ | ✅ |
-| **What permissions does it have?** | ❌ | ✅ |
-| **Plain English remediation** | ❌ | ✅ |
-| **Severity score with blast radius** | ❌ | ✅ |
-| **Scan any GitHub URL directly** | ❌ | ✅ |
-| **Interactive UI mode** | ❌ | ✅ |
-
----
-
-## Architecture
-
-```mermaid
-flowchart TD
-    A1[Local directory] --> DE
-    A2[Git history] --> DE
-    A3[GitHub URL] --> DE
-    A4[Staged changes] --> DE
-    DE["🔍 Detection engine
-    Regex · 17+ patterns · Shannon entropy"]
-    DE --> DD["Deduplication
-    SHA-256 per raw value"]
-    DD --> BR["💥 Blast radius engine
-    Live API verify · Permission enumeration
-    AWS · GitHub · OpenAI · Stripe · Slack · Twilio +12"]
-    BR --> SS["Severity scoring + remediation
-    CRITICAL → HIGH → MEDIUM → LOW"]
-    SS --> O1[Terminal / Rich UI]
-    SS --> O2[SARIF output]
-    SS --> O3[JSON / HTML]
-    style DE fill:#7F77DD,color:#fff,stroke:#534AB7
-    style DD fill:#888780,color:#fff,stroke:#5F5E5A
-    style BR fill:#D85A30,color:#fff,stroke:#993C1D
-    style SS fill:#1D9E75,color:#fff,stroke:#0F6E56
-    style O1 fill:#888780,color:#fff,stroke:#5F5E5A
-    style O2 fill:#888780,color:#fff,stroke:#5F5E5A
-    style O3 fill:#888780,color:#fff,stroke:#5F5E5A
-```
-
-> **Note:** Live verification applies to most providers (AWS, GitHub, OpenAI, Stripe, Slack, Twilio, npm, SendGrid, Heroku, Google). PyPI, Azure, and GCP are flagged for manual review instead — no safe verify endpoint, no tenant ID available, and avoiding audit-log noise, respectively.
-
----
-
-## Real-World Demo
-
-Scanning a test repo with a live canary AWS key:
-
-```
-aysal-scan scan https://github.com/trufflesecurity/test_keys
-```
-
-```
-╭─────────────────────────── 🔴 [CRITICAL] AWS Access Key ────────────────────────────╮
-│   File    :  new_key (line 2)                                                        │
-│   Secret  :  AKIA************ZAM2                                                    │
-│                                                                                      │
-│   Blast Radius:                                                                      │
-│     Key status  : ACTIVE                                                             │
-│     Account     : Account: 052310077262 | User: canarytokens.com@@c20nnjzl...        │
-│     Permission  : Could not enumerate — insufficient IAM permissions                 │
-│                                                                                      │
-│   Fix: 1. Go to AWS IAM Console → Users → Security Credentials                      │
-│        2. Deactivate this access key immediately                                     │
-│        3. Rotate + store in AWS Secrets Manager                                      │
-│        4. Remove from git history with: git filter-repo                              │
-╰──────────────────────────────────────────────────────────────────────────────────────╯
-
-✗ FAILED — secrets detected  |  Exit code: 1
-```
-
-> The blast radius engine called `sts:GetCallerIdentity` against live AWS, confirmed the key is **active**, retrieved the **real account ID**, and escalated severity to CRITICAL — all automatically.
-
----
+[TruffleHog](https://github.com/trufflesecurity/trufflehog) and [Gitleaks](https://github.com/gitleaks/gitleaks)
+are mature, fast Go tools with far larger rule sets and communities. Aysal-Scan is a **Python** tool
+that trades raw speed and breadth for **context**: it tries to tell you which leaks matter and why,
+and it is designed to be easy to read, extend and audit. If you need maximum throughput over huge
+monorepos or hundreds of detectors, use those tools — or run them alongside this one.
 
 ## Install
 
 ```bash
-pip install aysal-scan
+pip install aysal-scan            # core CLI
+pip install "aysal-scan[ui]"      # + interactive mode
 ```
 
-Or from source:
+> Use a virtual environment. Mixing global packages is the most common cause of install errors.
+
+## Quick start
 
 ```bash
-git clone https://github.com/Rolex-1905/aysal-scan
-cd aysal-scan
-pip install -e .
+aysal-scan scan .                          # scan the working tree (verifies found credentials)
+aysal-scan scan . --no-blast-radius        # offline: no API calls
+aysal-scan scan --staged                   # pre-commit: only the lines being added
+aysal-scan scan --commits 20               # last 20 commits of this branch
+aysal-scan scan --full-history             # every commit on every branch and tag
+aysal-scan scan https://github.com/org/repo --full-history
+aysal-scan scan . --report sarif -o results.sarif
+aysal-scan ui                              # guided interactive mode
 ```
 
-Requires Python 3.11+
+### ⚠ Verification uses the credentials it finds
 
----
+By default, Aysal-Scan makes **read-only** requests to each provider (for example
+`sts:GetCallerIdentity` for AWS, `GET /user` for GitHub) *using the leaked credential* to see whether
+it still works. This can appear in the credential owner's audit logs and may require authorization
+when you scan **someone else's** repository (e.g. a client engagement). Use `--no-blast-radius`
+(or `AYSAL_SCAN_NO_VERIFY=1`) when you are not authorised to use the credentials. Checks are
+read-only, rate-limited per provider and time-limited. A bad-format or unverifiable value is never
+reported as "active".
 
-## Quick Start
+## Exit codes
 
-```bash
-# Scan current directory
-aysal-scan scan .
+| Code | Meaning |
+|---|---|
+| `0` | Scan completed; nothing at or above `--fail-on` (default `HIGH`) |
+| `1` | Scan completed; secrets at or above `--fail-on` found |
+| `2` | The scan **could not run**: bad path, not a git repository, invalid option/config, clone failure |
 
-# Interactive mode — guided, no flags needed
-aysal-scan ui
+A scan that cannot run never reports "clean". `--min-severity` only limits what is **displayed**;
+pass/fail always considers every finding. `--no-fail` suppresses exit `1`, never exit `2`.
+
+## Severity and risk score
+
+**Severity** answers *what kind of secret is this?* and is then adjusted by evidence:
+
+| Evidence | Effect |
+|---|---|
+| Credential verified **revoked / expired** | Lowered to `LOW` |
+| Verified **live** and the severity was below `HIGH` | Raised to `HIGH` |
+| Verified **live with admin-level privileges** | Raised to `CRITICAL` |
+| Checker says it is harmless by design (expired JWT, Supabase `anon` key, test-mode Stripe key) | Lowered to `LOW` |
+| Example/template file (`.env.example`, `*.sample`) | One level lower |
+| Local/dev-looking database host | `MEDIUM` instead of `HIGH` |
+| Could not verify (rate limit, network, unsupported provider) | Unchanged, tagged `unverified` |
+
+**Risk score (0–100)** answers *how urgent is this leak?* from independent factors, all listed in
+the report (`--verbose` in the terminal): validity (live +40 / unverified +20 / revoked ≤12 total),
+privilege (+25 admin … +8 read), exposure (present now +15 / history-only +5), age (≥30 d +5,
+≥365 d +10), spread (+3), credential class (0–15), and context penalties (example file −25,
+public-by-design key −15). Findings are ordered by severity, then score.
+
+## Supported secrets
+
+Detection covers about 40 rules. “Verify” means a read-only provider check exists; everything else
+is detected and scored without a network call.
+
+| Group | Detected | Verify |
+|---|---|---|
+| Cloud | AWS access keys (`AKIA`, temporary `ASIA`), GCP service-account JSON, Azure client secrets, Google API keys, Google OAuth client secrets | AWS ✔ · Google API ✔ · GCP / Azure: manual review |
+| Source control & registries | GitHub (`ghp_` `gho_` `ghu_` `ghs_` `ghr_` `github_pat_`), GitLab, npm, PyPI, Docker Hub | GitHub ✔ · GitLab ✔ · npm ✔ · PyPI: manual |
+| AI / ML | OpenAI, Anthropic, Hugging Face | ✔ all three |
+| Payments & SaaS | Stripe (live / restricted / test / publishable), SendGrid, Twilio, Slack (bot / user / webhook), Heroku, DigitalOcean, Shopify, Telegram, Databricks, Postman, Linear, Notion, PlanetScale, Supabase | Stripe ✔ · SendGrid ✔ · Twilio ✔ · Slack ✔ · Heroku ✔ · DigitalOcean ✔ |
+| Crypto & connection strings | Private keys (RSA, EC, DSA, OpenSSH, PKCS#8, encrypted, PGP), age secret keys, database URLs (Postgres, MySQL, MongoDB, Redis, AMQP, MSSQL), JWTs | JWT: decoded (signature cannot be verified) |
+| Heuristic | `password=`/`token=`-style assignments (placeholder- and code-reference-filtered), high-entropy strings | — |
+
+Plus your own rules (below).
+
+## Configuration: `aysal-scan.toml`
+
+Defaults and custom rules live in `aysal-scan.toml` in the current directory (or `--config PATH`).
+Command-line flags always win over the file.
+
+```toml
+min_severity = "MEDIUM"
+fail_on = "HIGH"
+no_blast_radius = false
+max_file_size_mb = 5
+allow_list = ["<finding id>"]
+
+[[rules]]
+id = "acme-internal-token"
+description = "ACME internal API token"
+regex = 'acme_[a-z0-9]{32}'
+severity = "HIGH"            # CRITICAL | HIGH | MEDIUM | LOW | INFO
+secret_group = 0             # capture group holding the secret
+keywords = ["acme"]          # optional: the line must contain one of these
+entropy = 3.0                # optional: minimum Shannon entropy
 ```
 
----
+## Ignoring files: `AysalScanignore`
 
-## All Commands
-
-```bash
-# ── Scan targets ────────────────────────────────────────────────────────────
-aysal-scan scan .                                      # current directory
-aysal-scan scan /path/to/repo                          # specific path
-aysal-scan scan secrets.env                            # single file
-aysal-scan scan https://github.com/username/repo       # GitHub URL (auto-clones)
-
-# ── Git modes ───────────────────────────────────────────────────────────────
-aysal-scan scan --staged                               # staged changes only
-aysal-scan scan --commits 20                           # last 20 commits
-aysal-scan scan --full-history                         # entire git history
-
-# ── Output formats ──────────────────────────────────────────────────────────
-aysal-scan scan . --report json                        # JSON (for CI pipelines)
-aysal-scan scan . --report html --output report.html   # HTML report
-
-# ── Filters & options ───────────────────────────────────────────────────────
-aysal-scan scan . --min-severity HIGH                  # HIGH and CRITICAL only
-aysal-scan scan . --no-blast-radius                    # skip API checks (offline)
-aysal-scan scan . --no-fail                            # always exit 0
-aysal-scan scan . --allow-list <id1>,<id2>             # suppress known findings by ID
-aysal-scan scan . --verbose                            # show detailed blast radius debug output
-aysal-scan scan . --report sarif --sarif-baseline old.sarif  # only alert on genuinely new findings
-```
-
----
-
-## Supported Providers & Blast Radius Checks
-
-| Secret Type | Detection | Blast Radius Check |
-|:---|:---:|:---|
-| AWS Access Key | Regex | `sts:GetCallerIdentity` → IAM policy list |
-| GitHub Token (PAT / OAuth) | Regex | `/user` → scopes → repo access |
-| OpenAI API Key | Regex | `/v1/models` → billing exposure |
-| Stripe Secret Key | Regex | `/v1/balance` → live account access |
-| Stripe Publishable Key | Regex | Auto LOW |
-| Twilio Account SID | Regex | `/Accounts/{SID}` → status check |
-| SendGrid API Key | Regex | `/v3/scopes` → permission list |
-| Slack Bot Token | Regex | `auth.test` → workspace + permissions |
-| Slack Webhook URL | Regex | Probe → active/inactive check |
-| npm Token | Regex | `registry.npmjs.org/-/whoami` |
-| PyPI Token | Regex | Manual review (no safe verify endpoint) |
-| GCP Service Account JSON | JSON structure | Auto CRITICAL (project ID + client email parsed) |
-| Azure Client Secret | Context-aware regex | Manual review (tenant ID required to verify) |
-| Heroku API Key | Regex | `/account` → email + app access |
-| Google API Key | Regex | Probe enabled APIs |
-| JWT Token | Regex | Decode header + expiry check |
-| Private Key (RSA / EC / SSH) | Regex | Auto CRITICAL |
-| Database URL (Postgres, MySQL, Redis, MongoDB) | Regex | Auto HIGH |
-| High Entropy String | Shannon entropy > 4.5 | Flagged for manual review |
-
----
-
-## Severity Levels
-
-| Level | Meaning | Exit Code |
-|:---|:---|:---:|
-| 🔴 **CRITICAL** | Key is active + has admin/write access | `1` |
-| 🟠 **HIGH** | Key is active + significant read access | `1` |
-| 🟡 **MEDIUM** | Key appears valid but check failed or timed out | `0` |
-| 🔵 **LOW** | Test/publishable key — limited exposure | `0` |
-| ⚪ **INFO** | Likely a secret, unconfirmed | `0` |
-
-Exit code `1` on any CRITICAL or HIGH finding. Override with `--no-fail`.
-
----
-
-## GitHub Actions
-
-```yaml
-steps:
-  - uses: actions/checkout@v4
-    with:
-      fetch-depth: 0
-
-  - name: Aysal-Scan Secret Scan
-    uses: Rolex-1905/aysal-scan@v1.0.0
-    with:
-      path: '.'
-      min-severity: 'HIGH'
-      no-blast-radius: 'false'
-      fail-on-findings: 'true'
-
-  - name: Upload HTML Report
-    uses: actions/upload-artifact@v4
-    if: always()
-    with:
-      name: aysal-scan-report
-      path: aysal-scan-report.html
-      retention-days: 30
-
-  - name: Upload SARIF to GitHub Security tab
-    uses: github/codeql-action/upload-sarif@v3
-    if: always()
-    with:
-      sarif_file: aysal-scan-results.sarif
-      category: aysal-scan
-```
-
----
-
-## Pre-commit Hook
-
-**Recommended — remote repo mode** (auto-installs, always up to date):
-
-```yaml
-repos:
-  - repo: https://github.com/Rolex-1905/aysal-scan
-    rev: v1.0.0
-    hooks:
-      - id: aysal-scan               # fast — no API calls, offline safe
-```
-
-**With blast radius checks** (slower — calls provider APIs):
-
-```yaml
-repos:
-  - repo: https://github.com/Rolex-1905/aysal-scan
-    rev: v1.0.0
-    hooks:
-      - id: aysal-scan-with-blast-radius
-```
-
-**Local mode** (if you have aysal-scan already installed):
-
-```yaml
-repos:
-  - repo: local
-    hooks:
-      - id: aysal-scan
-        name: Aysal-Scan — secret detection
-        entry: aysal-scan scan --staged --no-blast-radius
-        language: system
-        pass_filenames: false
-```
-
-Install pre-commit and activate:
-
-```bash
-pip install pre-commit
-pre-commit install
-```
-
----
-
-## Ignoring Files
-
-Aysal-Scan automatically skips `node_modules/`, `.git/`, `dist/`, `build/`,
-`*.min.js`, lock files, and binary files.
-
-For custom rules, create an `AysalScanignore` file in your repo root
-(same syntax as `.gitignore`):
+Uses **real gitignore syntax** (negation `!`, `**`, anchoring `/`, directory `dir/`):
 
 ```gitignore
-# Ignore test fixtures with intentional fake keys
-tests/test_cli.py
-tests/test_patterns.py
-
-# Ignore example config files
+tests/fixtures/
 *.example
-*.sample
-config.example.env
+**/generated/
+!important/secrets-to-keep-scanning.env
 ```
 
----
+By default Aysal-Scan skips lock files, build output, `node_modules`, virtualenvs (detected by
+`pyvenv.cfg`), binaries, files over 5 MB and symlinks, and **reports how many it skipped**. It does
+**not** skip `logs/`, `bin/`, `env/` or `tmp/`, because real secrets live there.
 
-## How Blast Radius Works
+## Scanning untrusted repositories
 
-When a secret is detected, Aysal-Scan calls the provider's API using
-**read-only operations only** to answer three questions:
+A repository you are scanning can contain its own `AysalScanignore` — and a hostile one can contain
+`*` to hide everything. When you scan code you do not control (client engagements, bug bounty,
+downloaded samples) use:
 
-1. **Is this key still active?**
-2. **What can it access?**
-3. **How bad is it if someone already has it?**
-
-All checks run concurrently with a 10-second timeout per provider.
-A failed or timed-out check degrades gracefully to **MEDIUM** rather than
-crashing the scan. The raw secret is never stored — only the masked value
-(`AKIA****XMPL`) appears in any output or report.
-
----
-
-## Project Structure
-
-```
-aysal_scan/
-├── cli.py                    # Typer CLI + interactive UI
-├── models.py                 # Pydantic models (Finding, ScanReport, etc.)
-├── scanner/
-│   ├── patterns.py           # Regex patterns for 17+ secret types
-│   ├── entropy.py            # Shannon entropy analysis
-│   ├── file_scanner.py       # File + directory scanning
-│   ├── git_utils.py          # Git history, staged, commit scanning
-│   └── deduplicator.py       # Deduplicate across commits
-├── blast_radius/
-│   ├── aws.py                # AWS IAM checks via STS (user, group, inline policies)
-│   ├── github.py             # GitHub API scope check
-│   ├── openai_checker.py     # OpenAI key validation
-│   ├── stripe.py             # Stripe balance check
-│   ├── slack.py              # Slack auth.test
-│   ├── slack_webhook.py      # Slack webhook probe
-│   ├── twilio.py             # Twilio account check
-│   ├── sendgrid.py           # SendGrid scope list
-│   ├── npm.py                # npm whoami
-│   ├── pypi.py                # PyPI — flags for manual review (no safe verify endpoint)
-│   ├── heroku.py             # Heroku account check
-│   ├── google.py             # Google API probe
-│   ├── gcp.py                 # GCP Service Account JSON parsing
-│   ├── azure.py                # Azure Client Secret — manual review
-│   ├── jwt_checker.py        # JWT decode + expiry
-│   ├── base.py                 # Retry/backoff wrapper shared by all checkers
-│   └── generic.py            # Fallback for unknown types
-└── reporter/
-    ├── terminal.py           # Rich-formatted terminal output
-    ├── json_report.py        # JSON output for CI
-    ├── html_report.py        # Interactive HTML report (collapsible, filterable)
-    └── sarif_report.py        # SARIF 2.1.0 for GitHub Security tab
+```bash
+aysal-scan scan ./client-repo --no-ignore-file --no-blast-radius
+# or supply a trusted ignore file of your own:
+aysal-scan scan ./client-repo --ignore-file ~/my.ignore
 ```
 
----
+Terminal output escapes all untrusted text; symlinks are never followed; oversized and binary files
+are skipped; ids in reports can be salted (`AYSAL_SCAN_ID_SALT`) so shared reports do not expose a
+crackable SHA-256 of weak secrets.
 
-## Tech Stack
+## GitHub Action
 
-Built with **Python 3.11+** ·
-[Typer](https://typer.tiangolo.com/) ·
-[Rich](https://github.com/Textualize/rich) ·
-[Pydantic v2](https://docs.pydantic.dev/) ·
-[httpx](https://www.python-httpx.org/) ·
-[boto3](https://boto3.amazonaws.com/v1/documentation/api/latest/index.html) ·
-[GitPython](https://gitpython.readthedocs.io/)
+```yaml
+name: Secret scan
+on: [push, pull_request]
+jobs:
+  aysal-scan:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0          # needed for history: full
+      - uses: Rolex-1905/aysal-scan@v2
+        id: scan
+        with:
+          min-severity: HIGH
+          fail-on: HIGH
+          history: full           # none | full | <number of commits>
+      - uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: aysal-scan-results.sarif
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: aysal-scan-report
+          path: |
+            aysal-scan-report.html
+            aysal-scan-report.md
+```
 
----
+The job summary shows the Markdown report. Inputs: `path`, `min-severity`, `fail-on`,
+`fail-on-findings`, `history`, `no-blast-radius`, `config`. Scan *errors* always fail the job.
+
+## Pre-commit
+
+```yaml
+repos:
+  - repo: https://github.com/Rolex-1905/aysal-scan
+    rev: v2.0.0
+    hooks:
+      - id: aysal-scan          # fast, offline, only the lines being added
+```
+
+## Reports
+
+`--report terminal|json|html|sarif|markdown` (`-o FILE`). JSON and SARIF go to **stdout** when no file
+is given and all progress messages go to **stderr**, so `aysal-scan scan . --report json > out.json`
+is always valid JSON. SARIF uses repo-relative paths, static rule metadata and GitHub's
+`security-severity`, and supports `--sarif-baseline` so only *new* findings alert.
+
+## Benchmark
+
+`benchmarks/` contains a labelled synthetic corpus and a runner that scores any scanner on
+precision/recall (adapters for Gitleaks and TruffleHog are included but unverified — see
+`benchmarks/README.md`). The corpus is synthetic and written by this project's author: it is a
+regression guard, **not** evidence of superiority.
+
+## Limitations
+
+- Slower than Go scanners; very large histories take time (`--max-time`, `--commits` help).
+- Verified providers are a subset of detected ones; other credentials are detected and scored only.
+- Hex-only and base32 secrets are found only when a keyword (`token`, `secret`, `key`…) is nearby.
+- Passphrase-style passwords made of letters only are skipped by the code-reference filter.
+- A JWT's signature, and GCP/Azure credentials, cannot be verified without using them.
+- `AysalScanignore` is read from the working tree for historical commits as well.
+- History scans examine added lines; secrets that only existed in deleted files are found via the
+  commit that added them, but secrets in binary files are not.
 
 ## License
 
-MIT © 2026 Aysal-Scan
-
----
-
-<p align="center">
-  Built by <a href="https://www.linkedin.com/in/neeraj-mudunuru-79130a29a/"><b>Neeraj Mudunuru</b></a>
-</p>
+MIT © 2026 Neeraj Mudunuru

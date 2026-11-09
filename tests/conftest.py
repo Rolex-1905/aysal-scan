@@ -54,7 +54,11 @@ def database_url_content():
 
 @pytest.fixture
 def private_key_content():
-    return "-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEA...\n-----END RSA PRIVATE KEY-----\n"
+    # Fake key material (random-looking base64, NOT a real key) with a realistic shape.
+    body = "\n".join(
+        ["MIIEowIBAAKCAQEAfakeFAKEfakeFAKE" + str(i) * 8 + "abcdEFGHijklMNOPqrstUVWXyz0123456789" for i in range(4)]
+    )
+    return "-----BEGIN RSA PRIVATE KEY-----\n" + body + "\n-----END RSA PRIVATE KEY-----\n"
 
 @pytest.fixture
 def gcp_service_account_content():
@@ -63,7 +67,7 @@ def gcp_service_account_content():
         "project_id": "my-test-project",
         "private_key_id": "abc123",
         "client_email": "sa@my-test-project.iam.gserviceaccount.com",
-        "private_key": "-----BEGIN RSA PRIVATE KEY-----\nFAKE\n-----END RSA PRIVATE KEY-----\n",
+        "private_key": "-----BEGIN PRIVATE KEY-----\n" + "MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC" * 2 + "\n-----END PRIVATE KEY-----\n",
     }, indent=2)
 
 @pytest.fixture
