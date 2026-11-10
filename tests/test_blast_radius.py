@@ -134,8 +134,10 @@ class TestStripeChecker:
 class TestGCPServiceAccountChecker:
     def test_valid_service_account_json(self, gcp_service_account_content):
         result = GCPServiceAccountChecker().check(gcp_service_account_content)
-        assert result.is_active is True
+        # We never authenticate with the key, so validity is unverified (but treated as live).
+        assert result.is_active is None
         assert result.check_performed is True
+        assert "treat as active" in result.risk_summary.lower()
         assert "my-test-project" in result.account_info
         assert "sa@my-test-project.iam.gserviceaccount.com" in result.account_info
 

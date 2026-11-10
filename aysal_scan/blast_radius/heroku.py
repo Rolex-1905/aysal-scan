@@ -1,12 +1,15 @@
-"""Heroku API key blast radius checker."""
+"""Heroku API key checker."""
 from __future__ import annotations
 
 import httpx
+
 from aysal_scan.blast_radius.base import BaseChecker
 from aysal_scan.models import BlastRadiusResult
 
 
 class HerokuChecker(BaseChecker):
+    PROVIDER = "Heroku"
+
     def check(self, secret_value: str) -> BlastRadiusResult:
         try:
             resp = httpx.get(
@@ -17,47 +20,26 @@ class HerokuChecker(BaseChecker):
                 },
                 timeout=self.TIMEOUT,
             )
+            early = self.classify_status(self.status_of(resp))
+            if early is not None:
+                return early
 
-            if resp.status_code == 401:
-                return BlastRadiusResult(
-                    is_active=False,
-                    check_performed=True,
-                    risk_summary="Heroku API key is revoked or invalid.",
-                    remediation="No immediate action required — key is inactive.",
-                )
-
-            if resp.status_code == 200:
-                data = resp.json()
-                email = data.get("email", "unknown")
-                name = data.get("name", "")
-                return BlastRadiusResult(
-                    is_active=True,
-                    check_performed=True,
-                    account_info=f"{email} ({name})",
-                    permissions=["account:read", "apps:manage"],
-                    risk_summary=(
-                        f"Active Heroku API key. Account: {email}. "
-                        "Can manage all Heroku apps, dynos, add-ons, and config vars."
-                    ),
-                    remediation=(
-                        "Revoke at https://dashboard.heroku.com/account/applications "
-                        "then rotate all Heroku app config vars."
-                    ),
-                )
-
+            data = self.json_or_empty(resp)
+            email = data.get("email", "unknown")
+            name = data.get("name", "")
             return BlastRadiusResult(
-                is_active=None,
-                check_performed=True,
-                check_error=f"Unexpected HTTP {resp.status_code}",
-                risk_summary="Could not determine key status.",
-                remediation="Manually verify and revoke at Heroku dashboard.",
+                is_active=True, check_performed=True,
+                account_info=f"{email} ({name})",
+                permissions=["account:read", "apps:manage"],
+                risk_summary=(
+                    f"Active Heroku API key. Account: {email}. "
+                    "Can manage all Heroku apps, dynos, add-ons, and config vars."
+                ),
+                privilege="admin",
             )
-
         except Exception as exc:
             return BlastRadiusResult(
-                is_active=None,
-                check_performed=True,
-                check_error=str(exc),
+                is_active=None, check_performed=True, check_error=str(exc),
                 risk_summary="Blast radius check failed — treat key as active.",
                 remediation="Manually verify and revoke at Heroku dashboard.",
             )

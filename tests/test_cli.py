@@ -47,7 +47,7 @@ class TestScanCommand:
         assert "AWS" in result.output
 
     def test_private_key_detected(self, tmp_path):
-        _write(tmp_path, "key.pem", "-----BEGIN RSA PRIVATE KEY-----\nMIIEowIB...\n")
+        _write(tmp_path, "key.pem", "-----BEGIN RSA PRIVATE KEY-----\n" + "MIIEowIBAAKCAQEAfakeFAKEfakeFAKEabcdEFGHijklMNOPqrstUVWX0123456789" + "\n-----END RSA PRIVATE KEY-----\n")
         result = runner.invoke(app, ["scan", str(tmp_path), "--no-blast-radius", "--no-fail"])
         assert "Private Key" in result.output
 

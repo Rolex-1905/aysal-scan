@@ -49,10 +49,22 @@ def test_no_false_positive_in_clean_file():
     ]
     assert len(regex_findings) == 0
 
-def test_detects_gcp_service_account():
-    content = '{"type": "service_account", "project_id": "my-project", "client_email": "sa@my-project.iam.gserviceaccount.com"}'
+def test_detects_gcp_service_account(gcp_service_account_content):
+    findings, raw = scan_content(gcp_service_account_content, "credentials.json")
+    gcp = [f for f in findings if f.secret_type == SecretType.GCP_SERVICE_ACCOUNT]
+    assert len(gcp) == 1
+    assert gcp[0].severity.value == "CRITICAL"
+    # The checker must receive parseable metadata, not just the matched snippet.
+    import json
+    assert json.loads(raw[gcp[0].id])["client_email"].endswith("iam.gserviceaccount.com")
+
+
+def test_gcp_identity_without_private_key_is_info_not_critical():
+    content = '{"type": "service_account", "project_id": "p", "client_email": "sa@p.iam.gserviceaccount.com"}'
     findings, _ = scan_content(content, "credentials.json")
-    assert any(f.secret_type == SecretType.GCP_SERVICE_ACCOUNT for f in findings)
+    gcp = [f for f in findings if f.secret_type == SecretType.GCP_SERVICE_ACCOUNT]
+    assert len(gcp) == 1 and gcp[0].severity.value == "INFO"
+    assert "no-private-key" in gcp[0].tags
 
 def test_detects_stripe_test_secret():
     key = "sk_test_" + "a" * 24

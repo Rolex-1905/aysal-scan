@@ -43,3 +43,7 @@ Thumbs.db
 
 # Temp clone dirs
 aysal-scan-*/
+
+# Aysal-Scan generated reports and build output
+aysal-scan-report.*
+*.sarif

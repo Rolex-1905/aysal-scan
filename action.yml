@@ -1,5 +1,5 @@
 name: 'Aysal-Scan'
-description: 'Scan for leaked secrets and estimate blast radius'
+description: 'Find leaked secrets, verify which are live, and score how urgent each one is'
 author: 'Neeraj Mudunuru'
 
 inputs:
@@ -8,25 +8,33 @@ inputs:
     required: false
     default: '.'
   min-severity:
-    description: 'Minimum severity to report (CRITICAL/HIGH/MEDIUM/LOW/INFO)'
+    description: 'Lowest severity to DISPLAY (CRITICAL/HIGH/MEDIUM/LOW/INFO)'
     required: false
     default: 'HIGH'
+  fail-on:
+    description: 'Fail the job if a finding is at/above this severity (CRITICAL/HIGH/MEDIUM/LOW/INFO/NONE)'
+    required: false
+    default: 'HIGH'
+  fail-on-findings:
+    description: 'Set to false to never fail the job because of findings (scan errors still fail)'
+    required: false
+    default: 'true'
+  history:
+    description: 'Also scan git history: none, full, or a number of commits (needs fetch-depth: 0 for full)'
+    required: false
+    default: 'none'
   no-blast-radius:
-    description: 'Skip blast radius checks (faster, offline)'
+    description: 'Do not verify credentials with their providers (offline mode)'
     required: false
     default: 'false'
-  fail-on-findings:
-    description: 'Fail the workflow if secrets are found'
+  config:
+    description: 'Path to an aysal-scan.toml configuration file'
     required: false
-    default: 'true'
-  output-html:
-    description: 'Generate HTML report artifact'
-    required: false
-    default: 'true'
+    default: ''
 
 outputs:
   findings-count:
-    description: 'Total number of secrets found'
+    description: 'Number of findings at or above min-severity'
   report-path:
     description: 'Path to the HTML report'
   sarif-path:
