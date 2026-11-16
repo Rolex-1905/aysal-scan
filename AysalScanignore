@@ -10,3 +10,4 @@ docs/
 
 # Benchmark generator builds fake credentials from templates
 benchmarks/corpus.py
+benchmarks/corpus_realistic.py

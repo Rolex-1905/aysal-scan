@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Optional
 
 from aysal_scan import __version__
+from aysal_scan.compliance import classify, owasp_label
 from aysal_scan.models import Finding, ScanReport, Severity
 from aysal_scan.remediation import remediation_for
 
@@ -61,6 +62,7 @@ def build_sarif(
         existing = rules.get(rid)
         # One rule per detector; GitHub shows the most severe result severity.
         if existing is None or f.severity.rank < existing["_rank"]:
+            cwe, owasp = classify(f.secret_type)
             rules[rid] = {
                 "_rank": f.severity.rank,
                 "id": rid,
@@ -79,8 +81,10 @@ def build_sarif(
                 "helpUri": "https://github.com/Rolex-1905/aysal-scan#readme",
                 "defaultConfiguration": {"level": _LEVEL[f.severity]},
                 "properties": {
-                    "tags": ["security", "secret", "credentials"],
+                    "tags": ["security", "secret", "credentials", f"external/cwe/{cwe.lower()}"],
                     "security-severity": _SECURITY_SEVERITY[f.severity],
+                    "cwe": cwe,
+                    "owasp": owasp_label(owasp),
                 },
             }
     for rule in rules.values():

@@ -1,4 +1,4 @@
-"""CLI behaviour tests for the v2 contract (exit codes, fail-closed, output purity)."""
+"""CLI behaviour contract (exit codes, fail-closed, output purity)."""
 from __future__ import annotations
 
 import json
@@ -130,7 +130,7 @@ def test_json_stdout_is_pure_json_even_with_status_messages(tmp_path):
         capture_output=True, text=True,
     )
     data = json.loads(p.stdout)
-    assert data["schema_version"] == "2" and data["findings"]
+    assert data["schema_version"] == "1.1" and data["findings"]
 
 
 def test_json_report_contains_risk_score_and_factors(tmp_path):

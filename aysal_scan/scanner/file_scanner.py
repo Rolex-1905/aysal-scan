@@ -12,13 +12,17 @@ Key behaviours
 """
 from __future__ import annotations
 
+import base64
+import binascii
 import hashlib
 import hmac
 import json
+import multiprocessing
 import os
 import re
 import threading
-from dataclasses import dataclass
+from concurrent.futures import ProcessPoolExecutor
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
@@ -28,12 +32,16 @@ from aysal_scan.models import Finding, SecretType, Severity
 from aysal_scan.scanner.entropy import is_high_entropy_secret, shannon_entropy
 from aysal_scan.scanner.patterns import (
     get_all_patterns,
+    get_custom_patterns,
+    register_custom_patterns,
     is_placeholder_value,
     looks_like_code_reference,
 )
 
 IGNORE_FILE_NAME = "AysalScanignore"
 DEFAULT_MAX_FILE_SIZE = 5 * 1024 * 1024  # 5 MB
+PARALLEL_THRESHOLD = 300                 # use worker processes only for at least this many files
+MAX_AUTO_WORKERS = 8
 
 # ---------------------------------------------------------------------------
 # What we skip by default
@@ -154,13 +162,21 @@ def _dir_name_skipped(name: str) -> bool:
     return name in SKIP_DIR_NAMES or name.endswith(".egg-info")
 
 
+def _safe_is_file(path: Path) -> bool:
+    """``Path.is_file`` raises PermissionError on directories we may list but not inspect."""
+    try:
+        return path.is_file()
+    except OSError:
+        return False
+
+
 def _should_skip_dir(rel_dir: Path, abs_dir: Optional[Path] = None) -> bool:
     """Used by the directory walker to prune whole subtrees."""
     if _dir_name_skipped(rel_dir.name):
         return True
     if any(_has_sequence(rel_dir.parts, seq) for seq in SKIP_DIR_SEQUENCES):
         return True
-    if abs_dir is not None and (abs_dir / "pyvenv.cfg").is_file():
+    if abs_dir is not None and _safe_is_file(abs_dir / "pyvenv.cfg"):
         return True  # any virtualenv, whatever it is called
     return _ignored_by_spec(rel_dir.as_posix(), is_dir=True)
 
@@ -238,7 +254,39 @@ _TWILIO_AUTH_TOKEN_RE = re.compile(
     r'(?:TWILIO_AUTH_TOKEN|auth_token|authToken)\s*[:=]\s*["\']?'
     r'([a-fA-F0-9]{32})["\']?'
 )
+# A line carrying one of these markers is never reported (inline suppression). The Gitleaks and
+# detect-secrets markers are honoured too so existing code bases migrate without edits.
+ALLOW_MARKERS: tuple[str, ...] = (
+    "aysal-scan:allow", "aysalscan:allow", "gitleaks:allow",
+    "pragma: allowlist secret", "pragma: allowlist-secret",
+)
+
+
+def _line_allowed(line: str) -> bool:
+    low = line.lower()
+    return any(marker in low for marker in ALLOW_MARKERS)
+
+
 _ENTROPY_TOKEN_RE = re.compile(r"[A-Za-z0-9+/=_\-]{20,}")
+_B64_TOKEN_RE = re.compile(r"(?<![A-Za-z0-9+/=_-])[A-Za-z0-9+/]{16,}={0,2}(?![A-Za-z0-9+/=_-])")
+_MAX_DECODE_TOKENS = 500       # per scan_content call
+_MAX_DECODE_LINE = 20_000      # characters
+
+
+def _try_b64_text(token: str) -> Optional[str]:
+    """Decode a base64 token; return the text only if it is printable UTF-8 (not binary)."""
+    try:
+        raw = base64.b64decode(token + "=" * (-len(token) % 4), validate=True)
+    except (binascii.Error, ValueError):
+        return None
+    if len(raw) < 8:
+        return None
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+    printable = sum(ch.isprintable() or ch in "\n\r\t" for ch in text)
+    return text if printable / len(text) >= 0.95 else None
 _NAME_PREFIX_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,40}=(.+)$")
 _BASE64_BODY_RE = re.compile(r"[A-Za-z0-9+/=]{32,}")
 
@@ -315,6 +363,8 @@ def scan_content(
     line_map: Optional[list[int]] = None,
     commit_hash: Optional[str] = None,
     commit_date: Optional[str] = None,
+    _depth: int = 0,
+    _entropy: bool = True,
 ) -> tuple[list[Finding], dict[str, str]]:
     """Scan text and return ``(findings, raw_values)``.
 
@@ -330,6 +380,7 @@ def scan_content(
     lines = [ln.rstrip("\r") for ln in content.split("\n")]
     suppressed: set[int] = set()           # line indices consumed by a PEM block / GCP JSON
     paired_secrets: set[str] = set()       # secret halves already attached to an AWS key / Twilio SID
+    line_spans: dict[int, list[tuple[int, int]]] = {}  # spans claimed by named rules, per line
     patterns = get_all_patterns()
 
     def real_line(idx: int) -> int:
@@ -337,7 +388,11 @@ def scan_content(
             return line_map[idx]
         return idx + 1
 
+    line_state = {"allowed": False}
+
     def add(finding: Finding, raw: str) -> None:
+        if line_state["allowed"]:
+            return  # inline suppression marker on this line
         findings.append(finding)
         raw_values[finding.id] = raw
         seen_ids.add(finding.id)
@@ -349,6 +404,7 @@ def scan_content(
 
     for idx, line in enumerate(lines):
         matched_spans: list[tuple[int, int]] = []
+        line_state["allowed"] = _line_allowed(line)
 
         for pat in patterns:
             for match in pat.pattern.finditer(line):
@@ -356,6 +412,12 @@ def scan_content(
                 value = match.group(pat.value_group)
                 severity = pat.default_severity
                 tags: list[str] = []
+
+                if pat.check_dummy and _B64_TOKEN_RE.fullmatch(value) and _try_b64_text(value) is not None:
+                    # An encoded value (e.g. a Kubernetes `password: <base64>`): judge the DECODED
+                    # text in the decode pass instead of flagging the base64 string itself.
+                    matched_spans.pop()
+                    continue
 
                 if idx in suppressed and pat.secret_type in (
                     SecretType.PRIVATE_KEY, SecretType.GCP_SERVICE_ACCOUNT
@@ -460,8 +522,10 @@ def scan_content(
                     raw,
                 )
 
+        line_spans[idx] = matched_spans
+
         # ---- Entropy fallback for secrets no named rule recognised ----
-        if idx in suppressed:
+        if idx in suppressed or not _entropy:
             continue
         for tok in _ENTROPY_TOKEN_RE.finditer(line):
             if any(tok.start() < e and tok.end() > s for s, e in matched_spans):
@@ -490,6 +554,35 @@ def scan_content(
                 token,
             )
 
+    # ---- Encoded secrets: decode base64 values and rescan the line with the decoded text ----
+    if _depth == 0:
+        budget = _MAX_DECODE_TOKENS
+        for idx, line in enumerate(lines):
+            if budget <= 0:
+                break
+            if idx in suppressed or len(line) > _MAX_DECODE_LINE or _line_allowed(line):
+                continue
+            for tok in _B64_TOKEN_RE.finditer(line):
+                if budget <= 0:
+                    break
+                if any(tok.start() < e and tok.end() > s for s, e in line_spans.get(idx, [])):
+                    continue  # already recognised by a named rule (JWT segment, key, ...)
+                budget -= 1
+                decoded = _try_b64_text(tok.group())
+                if decoded is None:
+                    continue
+                rebuilt = line[:tok.start()] + decoded.replace("\n", " ").replace("\r", " ") + line[tok.end():]
+                sub_findings, sub_raw = scan_content(
+                    rebuilt, file_path, line_map=[real_line(idx)],
+                    commit_hash=commit_hash, commit_date=commit_date,
+                    _depth=1, _entropy=False,
+                )
+                for sf in sub_findings:
+                    if sf.id in seen_ids:
+                        continue
+                    sf.tags = [*sf.tags, "decoded-base64"]
+                    add(sf, sub_raw[sf.id])
+
     if paired_secrets:
         # The secret half of an AWS/Twilio credential is reported once, with its key/SID.
         drop = {
@@ -514,6 +607,7 @@ class ScanStats:
     skipped_binary: int = 0
     skipped_symlinks: int = 0
     unreadable: int = 0
+    notes: list[str] = field(default_factory=list)
 
     @property
     def files_skipped(self) -> int:
@@ -529,6 +623,7 @@ class ScanStats:
             out.append(f"{self.skipped_symlinks} symlink(s) not followed")
         if self.unreadable:
             out.append(f"{self.unreadable} file(s) could not be read (permissions/IO error)")
+        out.extend(self.notes)
         return out
 
 
@@ -561,14 +656,55 @@ def scan_file(file_path: Path, max_file_size: int = DEFAULT_MAX_FILE_SIZE):
     return scan_content(text, str(file_path))
 
 
-def scan_directory_ex(directory: Path, max_file_size: int = DEFAULT_MAX_FILE_SIZE):
-    """Scan a directory tree. Returns (findings, raw_values, ScanStats)."""
+def _init_worker(custom_patterns) -> None:
+    """Worker-process initializer: custom rules live in module state, so re-register them."""
+    register_custom_patterns(custom_patterns)
+
+
+def _scan_chunk(args):
+    """Scan a batch of files. Top-level so it can be pickled and run in a worker process.
+
+    Returns one tuple per file: (path, large, binary, unreadable, findings, raw_values).
+    """
+    paths, max_size = args
+    out = []
+    for path in paths:
+        st = ScanStats()
+        text = _read_text(Path(path), max_size, st)
+        if text is None:
+            out.append((path, st.skipped_large, st.skipped_binary, st.unreadable, [], {}))
+        else:
+            findings, raw = scan_content(text, path)
+            out.append((path, 0, 0, 0, findings, raw))
+    return out
+
+
+def resolve_jobs(jobs: Optional[int], n_files: int, threshold: int = PARALLEL_THRESHOLD) -> int:
+    """Number of worker processes. ``None``/0 = automatic: sequential for small trees."""
+    if not jobs:
+        if n_files < threshold:
+            return 1
+        return max(1, min(os.cpu_count() or 1, MAX_AUTO_WORKERS))
+    return max(1, int(jobs))
+
+
+def scan_directory_ex(
+    directory: Path,
+    max_file_size: int = DEFAULT_MAX_FILE_SIZE,
+    jobs: Optional[int] = None,
+    parallel_threshold: int = PARALLEL_THRESHOLD,
+):
+    """Scan a directory tree. Returns (findings, raw_values, ScanStats).
+
+    ``jobs``: 1 = single process, N = N worker processes, None/0 = automatic (parallel only for
+    trees of at least ``parallel_threshold`` files). Results are identical for every setting;
+    if worker processes cannot be started the scan silently falls back to one process.
+    """
     directory = Path(directory)
     load_ignore_patterns_for_root(directory)
     stats = ScanStats()
-    findings: list[Finding] = []
-    raw_values: dict[str, str] = {}
 
+    candidates: list[str] = []
     for root, dirs, files in os.walk(directory, followlinks=False):
         root_path = Path(root)
         rel_root = root_path.relative_to(directory)
@@ -577,18 +713,51 @@ def scan_directory_ex(directory: Path, max_file_size: int = DEFAULT_MAX_FILE_SIZ
         )
         for fname in sorted(files):
             fpath = root_path / fname
-            if fpath.is_symlink():
+            try:
+                is_link = fpath.is_symlink()
+            except OSError:           # listed but not inspectable (permissions): count it, keep going
+                stats.unreadable += 1
+                continue
+            if is_link:
                 stats.skipped_symlinks += 1
                 continue
             if _should_skip(rel_root / fname):
                 continue
-            text = _read_text(fpath, max_file_size, stats)
-            if text is None:
-                continue
+            candidates.append(str(fpath))
+
+    workers = resolve_jobs(jobs, len(candidates), parallel_threshold)
+    results = None
+    if workers > 1 and len(candidates) > 1:
+        size = max(10, len(candidates) // (workers * 8))
+        chunks = [(candidates[i:i + size], max_file_size) for i in range(0, len(candidates), size)]
+        try:
+            # "spawn" (not fork): the CLI runs this while a progress-spinner thread is alive, and
+            # forking a multi-threaded process can deadlock. Spawn is also the Windows default.
+            with ProcessPoolExecutor(
+                max_workers=workers,
+                mp_context=multiprocessing.get_context("spawn"),
+                initializer=_init_worker,
+                initargs=(get_custom_patterns(),),
+            ) as pool:
+                results = [row for batch in pool.map(_scan_chunk, chunks) for row in batch]
+        except Exception as exc:  # no fork/spawn permission, broken pool, pickling...
+            results = None
+            stats.notes.append(
+                f"Parallel scanning was unavailable ({type(exc).__name__}); scanned with one process."
+            )
+    if results is None:
+        results = _scan_chunk((candidates, max_file_size))
+
+    findings: list[Finding] = []
+    raw_values: dict[str, str] = {}
+    for _path, large, binary, unreadable, f, r in results:
+        stats.skipped_large += large
+        stats.skipped_binary += binary
+        stats.unreadable += unreadable
+        if not (large or binary or unreadable):
             stats.files_scanned += 1
-            f, r = scan_content(text, str(fpath))
-            findings.extend(f)
-            raw_values.update(r)
+        findings.extend(f)
+        raw_values.update(r)
     return findings, raw_values, stats
 
 

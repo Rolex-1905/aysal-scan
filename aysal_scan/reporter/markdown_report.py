@@ -43,8 +43,8 @@ def render_markdown(report: ScanReport) -> str:
         return "\n".join(lines) + "\n"
 
     lines += [
-        "| Severity | Type | Location | Risk | Status | Finding ID |",
-        "|---|---|---|---|---|---|",
+        "| Severity | Type | Location | Risk | Status | CWE | Finding ID |",
+        "|---|---|---|---|---|---|---|",
     ]
     ordered = sorted(
         report.findings,
@@ -55,7 +55,7 @@ def render_markdown(report: ScanReport) -> str:
         risk = f"{f.risk_score}/100" if f.risk_score is not None else "-"
         lines.append(
             f"| {_ICON[f.severity]} {f.severity.value} | {_cell(f.secret_type.value)} | {loc} | "
-            f"{risk} | {_status(f)} | `{f.id[:12]}…` |"
+            f"{risk} | {_status(f)} | {_cell(', '.join(f.cwe)) or '-'} | `{f.id[:12]}…` |"
         )
     lines += ["", "<details><summary>Remediation</summary>", ""]
     seen = set()
