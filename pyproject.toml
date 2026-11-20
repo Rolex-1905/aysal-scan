@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "aysal-scan"
-version = "2.0.0rc1"
+version = "1.1.0.dev2"
 description = "Find leaked secrets in git repos, verify which are live, and score how urgent each one is"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -37,6 +37,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+bench = [
+    "cryptography>=42.0.0",
+]
 ui = [
     "questionary>=2.0.0,<3.0.0",
 ]
@@ -47,7 +50,7 @@ dev = [
 ]
 
 [project.scripts]
-aysal-scan = "aysal_scan.cli:app"
+aysal-scan = "aysal_scan.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["."]

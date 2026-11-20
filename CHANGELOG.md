@@ -10,7 +10,60 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
-## [2.0.0rc1] - 2026-10-21
+## [1.1.0.dev2] - 2026-11-12 (development milestone; not published)
+
+### Added
+- **Inline suppression:** a line containing `aysal-scan:allow` is never reported. The Gitleaks
+  (`gitleaks:allow`) and detect-secrets (`pragma: allowlist secret`) markers are honoured too, so existing
+  code bases migrate without edits.
+- **Encoded secrets:** base64 values are decoded (printable UTF-8 only, one level, bounded) and the line is
+  rescanned with the decoded text, so Kubernetes `Secret` manifests, `Authorization: Basic ...` headers and
+  similar are covered. Findings are tagged `decoded-base64`. A harmless encoded placeholder
+  (`password: Y2hhbmdlbWU=`) is no longer reported.
+- **Compliance mapping:** every finding carries `cwe` and `owasp` (CWE-798 / 259 / 321 / 522; OWASP Top 10
+  2021 A02 / A07). SARIF rules carry GitHub's `external/cwe/...` tags; the Markdown report has a CWE column.
+- `aysal-scan install-hook` / `uninstall-hook`: a git pre-commit hook (LF line endings, honours
+  `core.hooksPath`, never overwrites a hook it did not write, backs up with `--force`, fails closed if the
+  scanner is missing).
+- Benchmark corpus **`realistic`** (structurally valid secrets: real generated RSA/EC/Ed25519 keys, a GCP
+  service-account file with a real key, OpenAI keys with their marker, GitHub tokens with their checksum) and
+  `--corpus` on the runner; optional extra `pip install aysal-scan[bench]`.
+- Tests for the Anthropic, Hugging Face, GitLab and DigitalOcean verifiers and for Slack / SendGrid / Stripe
+  branches (coverage 80% -> 87%).
+
+- **Parallel directory scanning** (`--jobs N`, default automatic): large trees (300+ files) are scanned by
+  worker processes. Results are identical to single-process scanning; if workers cannot start it falls back
+  to one process and says so. Workers use the `spawn` start method (forking a process that runs a progress
+  thread can deadlock).
+- **Faster git history:** `--full-history` / `--commits` read history from one streaming `git log -p`
+  instead of one diff per commit (needs git 2.31+; falls back to the previous implementation otherwise or
+  with `AYSAL_SCAN_GIT_BACKEND=gitpython`). Both backends are tested to return identical findings.
+- `scripts/live_verify.py` and `docs/LIVE_VERIFICATION.md`: check every verifier against the real provider
+  API with your own free throwaway credentials (credentials come from environment variables and are never
+  printed).
+
+### Fixed
+- **Crash when output is piped or redirected on Windows.** Python encodes piped output with the legacy code
+  page (cp1252), which cannot represent the check mark, box and emoji characters in reports, so the scan died
+  with `UnicodeEncodeError`. A pre-commit hook run by an editor that captures its output then blocked every
+  commit, even clean ones. stdout/stderr are now switched to UTF-8 (with replacement characters) when they
+  cannot encode the report.
+- An unexpected internal error used to exit with code 1, indistinguishable from "secrets found". The console
+  command now exits **2** ("the scan could not run") with a one-line message; `AYSAL_SCAN_DEBUG=1` shows the
+  traceback. `Ctrl+C` exits 130.
+- A directory whose entries can be listed but not inspected crashed the whole scan with `PermissionError`;
+  such files are now counted as unreadable and reported.
+- "Last N commits" used a different commit order than the history scan on merge-heavy repositories; both now
+  use topological order.
+
+### Changed
+- Report JSON `schema_version` is now `1.1` (additive fields only).
+- Versioning: the project now uses `1.1.0.devN` development milestones. Nothing in this series is published.
+- README states the development status honestly and documents installing from `main` and using the CLI in CI
+  (the packaged Action image is rebuilt only on release).
+- Benchmark adapters for Gitleaks 8.30.1 and TruffleHog 3.99.8 are now verified.
+
+## [1.1.0.dev1] - 2026-10-21 (development milestone; not published)
 
 A ground-up hardening release. Every item below was reproduced against 1.0.2 before being fixed,
 and has a regression test.

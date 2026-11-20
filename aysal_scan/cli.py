@@ -21,6 +21,7 @@ import re
 import shutil
 import stat
 import subprocess
+import sys
 import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -34,6 +35,7 @@ from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn, TimeEl
 
 from aysal_scan import __version__
 from aysal_scan.blast_radius import NETWORK_SECRET_TYPES, run_blast_radius_concurrent
+from aysal_scan.compliance import apply_compliance
 from aysal_scan.config import ConfigError, compile_rules, find_config, load_config
 from aysal_scan.models import Finding, ScanReport, Severity
 from aysal_scan.reporter.html_report import generate_html_report
@@ -71,6 +73,28 @@ status = Console(stderr=True)
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+def _ensure_unicode_streams() -> None:
+    """Make stdout/stderr able to print the symbols used in reports (check marks, boxes, emoji).
+
+    When output is piped or redirected on Windows, Python encodes it with the legacy code page
+    (cp1252), which cannot represent them and used to crash the scan with UnicodeEncodeError.
+    Streams that cannot do UTF-8 are switched to it with replacement characters, so output can
+    never abort a scan.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        encoding = (getattr(stream, "encoding", None) or "").lower().replace("-", "").replace("_", "")
+        if encoding in ("utf8", "utf8sig"):
+            continue
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:
+            continue
+        try:
+            reconfigure(encoding="utf-8", errors="replace")
+        except (ValueError, OSError):
+            pass
+
+
 
 def _fail(message: str) -> "typer.Exit":
     status.print(f"[bold red]Error:[/bold red] {escape(message)}")
@@ -180,6 +204,7 @@ class ScanOptions:
     verbose: bool = False
     max_file_size: int = DEFAULT_MAX_FILE_SIZE
     max_history_seconds: Optional[float] = None
+    jobs: int = 0                       # 0 = automatic
 
 
 # ---------------------------------------------------------------------------
@@ -232,7 +257,7 @@ def _run_scan(target: Path, opts: ScanOptions) -> None:
 
         else:
             progress.update(task, description="[cyan]Scanning files")
-            findings, raw_values, stats = scan_directory_ex(target, opts.max_file_size)
+            findings, raw_values, stats = scan_directory_ex(target, opts.max_file_size, jobs=opts.jobs)
             files_scanned, files_skipped = stats.files_scanned, stats.files_skipped
             warnings.extend(stats.warnings())
 
@@ -256,7 +281,7 @@ def _run_scan(target: Path, opts: ScanOptions) -> None:
                 on_progress=lambda done, total: progress.update(task, completed=done, total=total),
             )
 
-        findings = apply_scores(findings)
+        findings = apply_compliance(apply_scores(findings))
 
     findings.sort(key=lambda f: (f.severity.rank, -(f.risk_score or 0), f.file_path, f.line_number or 0))
 
@@ -374,6 +399,7 @@ def scan(
     no_ignore_file: bool = typer.Option(False, "--no-ignore-file", help="Ignore any AysalScanignore in the scanned tree (use for UNTRUSTED repos)"),
     max_file_size: float = typer.Option(5.0, "--max-file-size", help="Skip files larger than this many MB"),
     max_time: Optional[float] = typer.Option(None, "--max-time", help="Stop a history scan after this many seconds"),
+    jobs: int = typer.Option(0, "--jobs", "-j", help="Worker processes for large directory scans (0 = automatic, 1 = single process)"),
 ) -> None:
     """Scan a path, file, or git URL for leaked secrets."""
     # ---- configuration -------------------------------------------------
@@ -406,6 +432,8 @@ def scan(
         _fail("--staged needs a local repository, not a URL")
     if max_file_size <= 0:
         _fail("--max-file-size must be greater than 0")
+    if jobs < 0:
+        _fail("--jobs must be 0 (automatic) or greater")
     if ignore_file and not Path(ignore_file).is_file():
         _fail(f"--ignore-file: file not found: {ignore_file}")
 
@@ -422,7 +450,7 @@ def scan(
         output_json=output_json, output_sarif=output_sarif, output_markdown=output_markdown,
         min_severity=min_severity, fail_on=fail_on, no_fail=no_fail, allow_list=allow_list,
         sarif_baseline=sarif_baseline, verbose=verbose,
-        max_file_size=int(max_file_size * 1024 * 1024), max_history_seconds=max_time,
+        max_file_size=int(max_file_size * 1024 * 1024), max_history_seconds=max_time, jobs=jobs,
     )
 
     target, is_temp = _resolve_target(path, full_history=full_history)
@@ -433,6 +461,84 @@ def scan(
     finally:
         if is_temp:
             _rmtree(target)
+
+
+# ---------------------------------------------------------------------------
+# Git hook management
+# ---------------------------------------------------------------------------
+
+HOOK_MARKER = "# Installed by aysal-scan install-hook"
+HOOK_SCRIPT = f"""#!/bin/sh
+{HOOK_MARKER}
+# Scans only the lines being added (offline, no credential verification).
+# Bypass once with: git commit --no-verify
+if ! command -v aysal-scan >/dev/null 2>&1; then
+  echo "aysal-scan is not installed or not on PATH; commit blocked. Install it, or use --no-verify." >&2
+  exit 1
+fi
+exec aysal-scan scan --staged --no-blast-radius --fail-on HIGH
+"""
+
+
+def _hook_path(repo: Path) -> Path:
+    """Path of the pre-commit hook, honouring core.hooksPath and worktrees."""
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(repo), "rev-parse", "--git-path", "hooks"],
+            capture_output=True, text=True, timeout=30,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        _fail("The 'git' executable was not found or did not respond")
+    if result.returncode != 0:
+        _fail(f"Not a git repository: {repo}")
+    hooks = Path(result.stdout.strip())
+    if not hooks.is_absolute():
+        hooks = (repo / hooks).resolve()
+    return hooks / "pre-commit"
+
+
+@app.command("install-hook")
+def install_hook(
+    path: str = typer.Argument(".", help="Repository to install the hook into"),
+    force: bool = typer.Option(False, "--force", help="Replace an existing pre-commit hook (it is backed up)"),
+) -> None:
+    """Install a git pre-commit hook that blocks commits adding HIGH+ secrets."""
+    hook = _hook_path(Path(path).resolve())
+    hook.parent.mkdir(parents=True, exist_ok=True)
+
+    if hook.exists():
+        existing = hook.read_text(encoding="utf-8", errors="ignore")
+        if HOOK_MARKER not in existing:
+            if not force:
+                _fail(f"A pre-commit hook already exists at {hook}. Use --force to replace it (a backup is kept).")
+            backup = hook.with_name("pre-commit.aysal-backup")
+            shutil.copyfile(hook, backup)
+            status.print(f"[yellow]Existing hook backed up to {escape(str(backup))}[/yellow]")
+
+    hook.write_text(HOOK_SCRIPT, encoding="utf-8", newline="\n")  # LF: a CRLF shebang breaks the hook
+    hook.chmod(hook.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    console.print(f"[green]Installed pre-commit hook:[/green] {escape(str(hook))}")
+    console.print("[dim]Remove it with: aysal-scan uninstall-hook[/dim]")
+
+
+@app.command("uninstall-hook")
+def uninstall_hook(
+    path: str = typer.Argument(".", help="Repository to remove the hook from"),
+) -> None:
+    """Remove the pre-commit hook installed by `install-hook` (never touches other hooks)."""
+    hook = _hook_path(Path(path).resolve())
+    if not hook.exists():
+        console.print("No pre-commit hook is installed.")
+        return
+    if HOOK_MARKER not in hook.read_text(encoding="utf-8", errors="ignore"):
+        _fail(f"{hook} was not installed by aysal-scan; refusing to remove it.")
+    hook.unlink()
+    backup = hook.with_name("pre-commit.aysal-backup")
+    if backup.exists():
+        shutil.move(str(backup), str(hook))
+        console.print("[green]Removed the aysal-scan hook and restored your previous hook.[/green]")
+    else:
+        console.print("[green]Removed the aysal-scan hook.[/green]")
 
 
 @app.command()
@@ -601,7 +707,31 @@ def _main(
     ),
 ) -> None:
     """Find leaked secrets in git repositories and measure what each one can access."""
+    _ensure_unicode_streams()
+
+
+def main() -> None:
+    """Console-script entry point.
+
+    Anything unexpected becomes exit code 2 ("the scan could not run") with a one-line message,
+    never exit code 1, which means "secrets found". Set AYSAL_SCAN_DEBUG=1 to see the traceback.
+    """
+    _ensure_unicode_streams()
+    try:
+        app()
+    except KeyboardInterrupt:
+        status.print("[yellow]Interrupted.[/yellow]")
+        sys.exit(130)
+    except Exception as exc:  # noqa: BLE001 - last line of defence, deliberately broad
+        if os.environ.get("AYSAL_SCAN_DEBUG"):
+            raise
+        status.print(
+            f"[bold red]Error:[/bold red] unexpected {type(exc).__name__}: {escape(str(exc))}\n"
+            "[dim]The scan did not complete. Re-run with AYSAL_SCAN_DEBUG=1 for the full traceback "
+            "and please report it.[/dim]"
+        )
+        sys.exit(EXIT_ERROR)
 
 
 if __name__ == "__main__":
-    app()
+    main()

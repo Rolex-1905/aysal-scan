@@ -1,4 +1,4 @@
-"""Regression tests for the git layer (v1 audit findings)."""
+"""Regression tests for the git layer (audit findings)."""
 from __future__ import annotations
 
 import subprocess

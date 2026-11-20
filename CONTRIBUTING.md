@@ -33,7 +33,7 @@ pytest            # must pass; coverage gate is 80%
 2. Add provider-specific guidance in `remediation.py`.
 3. If the provider has a safe read-only endpoint, add a checker in `blast_radius/` built on
    `classify_status`, register it in `blast_radius/__init__.py`, and test 200 / 401 / 403 / 429 / 5xx.
-4. Add cases to `tests/test_scanner_v2.py` and, for benchmark coverage, `benchmarks/corpus.py`.
+4. Add cases to `tests/test_scanner_regressions.py` and, for benchmark coverage, `benchmarks/corpus.py`.
 
 ## Commit style
 

@@ -1,5 +1,7 @@
 # Aysal-Scan 🔐
 
+> **Status: in active development (`1.1.0.dev` series).** The latest *published* release on PyPI is 1.0.2. The code on `main` is substantially newer and is not yet released; install it from source (below).
+
 > **A**nalyze **Y**our **S**ecrets **A**nd **L**eaks — find leaked credentials in git repositories, check which ones are still live, and score how urgent each leak is.
 
 [![CI](https://github.com/Rolex-1905/aysal-scan/actions/workflows/aysal-scan.yml/badge.svg)](https://github.com/Rolex-1905/aysal-scan/actions/workflows/aysal-scan.yml)
@@ -30,8 +32,12 @@ monorepos or hundreds of detectors, use those tools — or run them alongside th
 ## Install
 
 ```bash
-pip install aysal-scan            # core CLI
-pip install "aysal-scan[ui]"      # + interactive mode
+# Development version (this repository's main branch):
+pip install "git+https://github.com/Rolex-1905/aysal-scan@main"
+pip install "aysal-scan[ui] @ git+https://github.com/Rolex-1905/aysal-scan@main"   # + interactive mode
+
+# Last published release (older, 1.0.2):
+pip install aysal-scan
 ```
 
 > Use a virtual environment. Mixing global packages is the most common cause of install errors.
@@ -59,6 +65,13 @@ when you scan **someone else's** repository (e.g. a client engagement). Use `--n
 read-only, rate-limited per provider and time-limited. A bad-format or unverifiable value is never
 reported as "active".
 
+## Speed
+
+* `--jobs N` (default automatic): trees of 300+ files are scanned by worker processes; `--jobs 1` forces a
+  single process. Output is identical either way.
+* Directory walking prunes skipped folders such as `node_modules`; history scans stream one `git log -p`
+  (git 2.31+). `--max-time` bounds a long history scan.
+
 ## Exit codes
 
 | Code | Meaning |
@@ -67,7 +80,7 @@ reported as "active".
 | `1` | Scan completed; secrets at or above `--fail-on` found |
 | `2` | The scan **could not run**: bad path, not a git repository, invalid option/config, clone failure |
 
-A scan that cannot run never reports "clean". `--min-severity` only limits what is **displayed**;
+A scan that cannot run never reports "clean" (this includes unexpected internal errors, which also exit `2`; set `AYSAL_SCAN_DEBUG=1` for the traceback). `--min-severity` only limits what is **displayed**;
 pass/fail always considers every finding. `--no-fail` suppresses exit `1`, never exit `2`.
 
 ## Severity and risk score
@@ -128,6 +141,28 @@ keywords = ["acme"]          # optional: the line must contain one of these
 entropy = 3.0                # optional: minimum Shannon entropy
 ```
 
+## Suppressing a finding
+
+Put a marker on the line itself — no ignore file needed:
+
+```python
+API_KEY = "sk_live_..."   # aysal-scan:allow
+```
+
+`gitleaks:allow` and `pragma: allowlist secret` work too. For whole files or folders use
+`AysalScanignore`; to suppress by finding id use `--allow-list`.
+
+## Encoded secrets
+
+Base64 values are decoded and rescanned, so a Kubernetes `Secret`, a `Basic` auth header or an encoded
+token is found (tagged `decoded-base64`). One level only; binary data and prose are ignored.
+
+## Compliance mapping
+
+Each finding carries `cwe` (CWE-798 hard-coded credentials, CWE-259 hard-coded password, CWE-321
+hard-coded cryptographic key, CWE-522 insufficiently protected credentials) and `owasp` (Top 10 2021
+A07 / A02) in JSON, SARIF (shown in GitHub code scanning) and Markdown output.
+
 ## Ignoring files: `AysalScanignore`
 
 Uses **real gitignore syntax** (negation `!`, `**`, anchoring `/`, directory `dir/`):
@@ -159,7 +194,10 @@ Terminal output escapes all untrusted text; symlinks are never followed; oversiz
 are skipped; ids in reports can be salted (`AYSAL_SCAN_ID_SALT`) so shared reports do not expose a
 crackable SHA-256 of weak secrets.
 
-## GitHub Action
+## CI usage (GitHub Actions)
+
+The packaged Action and Docker image are rebuilt only when a release is published, so until then use the CLI
+directly. This works today and exercises exactly the code on `main`:
 
 ```yaml
 name: Secret scan
@@ -173,35 +211,36 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0          # needed for history: full
-      - uses: Rolex-1905/aysal-scan@v2
-        id: scan
+          fetch-depth: 0          # needed to scan full history
+      - uses: actions/setup-python@v5
         with:
-          min-severity: HIGH
-          fail-on: HIGH
-          history: full           # none | full | <number of commits>
+          python-version: "3.12"
+      - run: pip install "git+https://github.com/Rolex-1905/aysal-scan@main"
+      - name: Scan tree and history (fails on HIGH or worse)
+        run: |
+          aysal-scan scan . --no-blast-radius --fail-on HIGH \
+            --output-sarif aysal.sarif --output-markdown aysal.md
+          aysal-scan scan . --full-history --no-blast-radius --fail-on HIGH
+      - run: cat aysal.md >> "$GITHUB_STEP_SUMMARY"
+        if: always()
       - uses: github/codeql-action/upload-sarif@v3
         if: always()
         with:
-          sarif_file: aysal-scan-results.sarif
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: aysal-scan-report
-          path: |
-            aysal-scan-report.html
-            aysal-scan-report.md
+          sarif_file: aysal.sarif
 ```
 
-The job summary shows the Markdown report. Inputs: `path`, `min-severity`, `fail-on`,
-`fail-on-findings`, `history`, `no-blast-radius`, `config`. Scan *errors* always fail the job.
-
 ## Pre-commit
+
+```bash
+aysal-scan install-hook          # installs a git pre-commit hook for this repository
+```
+
+or with the `pre-commit` framework (pin `rev` to a commit SHA once you depend on it):
 
 ```yaml
 repos:
   - repo: https://github.com/Rolex-1905/aysal-scan
-    rev: v2.0.0
+    rev: main
     hooks:
       - id: aysal-scan          # fast, offline, only the lines being added
 ```
@@ -212,6 +251,12 @@ repos:
 is given and all progress messages go to **stderr**, so `aysal-scan scan . --report json > out.json`
 is always valid JSON. SARIF uses repo-relative paths, static rule metadata and GitHub's
 `security-severity`, and supports `--sarif-baseline` so only *new* findings alert.
+
+## Verifying the verifiers
+
+`scripts/live_verify.py` checks each provider checker against the real API using your own throwaway
+credentials; see `docs/LIVE_VERIFICATION.md` for free ways to get them. Anthropic, OpenAI and DigitalOcean
+checkers cannot be tested for free and are covered by mocked tests only.
 
 ## Benchmark
 

@@ -1,4 +1,4 @@
-"""Regression tests for every detection / scanning bug found in the v1 audit."""
+"""Regression tests for every detection / scanning bug found in the audit."""
 from __future__ import annotations
 
 import os
@@ -491,3 +491,104 @@ def test_pgp_armor_headers_do_not_break_detection():
     body = "\n".join("lQdGBF" + "aB3dE5gH7jK9mN1pQ3sT5vW7yZ9bD1fH3jL5nP7rT9vX1zB3" for _ in range(3))
     text = "-----BEGIN PGP PRIVATE KEY BLOCK-----\nVersion: GnuPG v2\n\n" + body + "\n-----END PGP PRIVATE KEY BLOCK-----\n"
     assert SecretType.PRIVATE_KEY in types(scan_content(text, "k.asc")[0])
+
+
+# --------------------------------------------------------------------------
+# Inline suppression markers
+# --------------------------------------------------------------------------
+
+@pytest.mark.parametrize("marker", [
+    "# aysal-scan:allow", "// AYSAL-SCAN:ALLOW", "# gitleaks:allow", "# pragma: allowlist secret",
+])
+def test_inline_marker_suppresses_the_line(marker):
+    assert scan_content(f"STRIPE=sk_live_{'a1B2c3D4' * 3}  {marker}\n", "x.env")[0] == []
+
+
+def test_marker_only_suppresses_its_own_line():
+    text = f"A=sk_live_{'a1B2c3D4' * 3}  # aysal-scan:allow\nB=sk_live_{'Z9y8X7w6' * 3}\n"
+    f, _ = scan_content(text, "x.env")
+    assert len(f) == 1 and f[0].line_number == 2
+
+
+def test_allowed_occurrence_does_not_hide_the_same_secret_elsewhere():
+    key = f"sk_live_{'a1B2c3D4' * 3}"
+    f, _ = scan_content(f"A={key}  # aysal-scan:allow\nB={key}\n", "x.env")
+    assert len(f) == 1 and f[0].line_number == 2
+
+
+def test_marker_on_a_private_key_header_suppresses_the_block_without_entropy_noise():
+    body = "\n".join("MIIEowIBAAKCAQEAfakeFAKEfakeFAKEabcdEFGHijklMNOPqrstUVWX0123456789"[:64] for _ in range(3))
+    text = "-----BEGIN RSA PRIVATE KEY-----  # aysal-scan:allow\n" + body + "\n-----END RSA PRIVATE KEY-----\n"
+    assert scan_content(text, "k.pem")[0] == []
+
+
+# --------------------------------------------------------------------------
+# Base64-encoded secrets
+# --------------------------------------------------------------------------
+
+import base64 as _b64  # noqa: E402
+
+
+def _enc(text: str) -> str:
+    return _b64.b64encode(text.encode()).decode()
+
+
+def test_kubernetes_secret_with_encoded_aws_key():
+    key = "AKIA" + "Q7W3E5R9T1Y2U4I6"[:16]
+    yaml = f"apiVersion: v1\nkind: Secret\ndata:\n  AWS_ACCESS_KEY_ID: {_enc(key)}\n"
+    f, _ = scan_content(yaml, "secret.yaml")
+    aws = [x for x in f if x.secret_type == SecretType.AWS_ACCESS_KEY]
+    assert len(aws) == 1 and "decoded-base64" in aws[0].tags and aws[0].line_number == 4
+
+
+def test_kubernetes_secret_password_gets_context_from_the_key_name():
+    yaml = f"data:\n  password: {_enc('xK9#mP2$vL8qR4')}\n"
+    f, _ = scan_content(yaml, "secret.yaml")
+    assert SecretType.GENERIC in types(f) and "decoded-base64" in f[0].tags
+
+
+def test_basic_auth_header_with_encoded_token():
+    token = "ghp_" + "a1B2" * 9
+    f, _ = scan_content(f"Authorization: Basic {_enc('deploy:' + token)}\n", "req.txt")
+    assert SecretType.GITHUB_TOKEN in types(f)
+
+
+def test_binary_base64_is_ignored():
+    blob = _b64.b64encode(bytes(range(256)) * 2).decode()
+    f, _ = scan_content(f"data: {blob}\n", "x.yaml")
+    assert [x for x in f if x.severity != Severity.INFO] == []
+
+
+def test_base64_of_ordinary_prose_is_ignored():
+    text = _enc("The quick brown fox jumps over the lazy dog near the river bank.")
+    f, _ = scan_content(f"note: {text}\n", "x.yaml")
+    assert [x for x in f if x.severity != Severity.INFO] == []
+
+
+def test_same_secret_plain_and_encoded_is_one_finding():
+    key = "sk_live_" + "a1B2c3D4" * 3
+    f, _ = scan_content(f"A={key}\nB: {_enc(key)}\n", "x.yaml")
+    assert len([x for x in f if x.secret_type == SecretType.STRIPE_SECRET]) == 1
+
+
+def test_encoded_secret_respects_inline_suppression():
+    key = "sk_live_" + "a1B2c3D4" * 3
+    assert scan_content(f"B: {_enc(key)}  # aysal-scan:allow\n", "x.yaml")[0] == []
+
+
+def test_decoding_does_not_run_on_decoded_text_again():
+    inner = _enc("sk_live_" + "a1B2c3D4" * 3)
+    f, _ = scan_content(f"B: {_enc(inner)}\n", "x.yaml")   # double-encoded: one level only
+    assert SecretType.STRIPE_SECRET not in types(f)
+
+
+def test_decode_pass_leaves_jwts_alone():
+    import json
+    seg = lambda d: _b64.urlsafe_b64encode(json.dumps(d).encode()).decode().rstrip("=")
+    tok = f"{seg({'alg': 'HS256', 'typ': 'JWT'})}.{seg({'sub': 'user-12345678', 'iss': 'acme'})}.{'A' * 43}"
+    f, _ = scan_content(f"T={tok}\n", "x.env")
+    assert types(f) == [SecretType.JWT]
+
+
+def test_encoded_placeholder_password_is_not_a_secret():
+    assert scan_content(f"data:\n  password: {_enc('changeme-placeholder-value')}\n", "s.yaml")[0] == []
