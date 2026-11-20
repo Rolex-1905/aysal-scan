@@ -43,6 +43,14 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   printed).
 
 ### Fixed
+- **Crash when output is piped or redirected on Windows.** Python encodes piped output with the legacy code
+  page (cp1252), which cannot represent the check mark, box and emoji characters in reports, so the scan died
+  with `UnicodeEncodeError`. A pre-commit hook run by an editor that captures its output then blocked every
+  commit, even clean ones. stdout/stderr are now switched to UTF-8 (with replacement characters) when they
+  cannot encode the report.
+- An unexpected internal error used to exit with code 1, indistinguishable from "secrets found". The console
+  command now exits **2** ("the scan could not run") with a one-line message; `AYSAL_SCAN_DEBUG=1` shows the
+  traceback. `Ctrl+C` exits 130.
 - A directory whose entries can be listed but not inspected crashed the whole scan with `PermissionError`;
   such files are now counted as unreadable and reported.
 - "Last N commits" used a different commit order than the history scan on merge-heavy repositories; both now

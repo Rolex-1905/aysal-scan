@@ -80,7 +80,7 @@ reported as "active".
 | `1` | Scan completed; secrets at or above `--fail-on` found |
 | `2` | The scan **could not run**: bad path, not a git repository, invalid option/config, clone failure |
 
-A scan that cannot run never reports "clean". `--min-severity` only limits what is **displayed**;
+A scan that cannot run never reports "clean" (this includes unexpected internal errors, which also exit `2`; set `AYSAL_SCAN_DEBUG=1` for the traceback). `--min-severity` only limits what is **displayed**;
 pass/fail always considers every finding. `--no-fail` suppresses exit `1`, never exit `2`.
 
 ## Severity and risk score

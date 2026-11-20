@@ -50,7 +50,7 @@ dev = [
 ]
 
 [project.scripts]
-aysal-scan = "aysal_scan.cli:app"
+aysal-scan = "aysal_scan.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["."]

@@ -128,3 +128,20 @@ def test_hook_fails_closed_when_the_scanner_is_missing(repo):
         pytest.skip("aysal-scan is on the minimal PATH")
     p = subprocess.run([sh, str(hook_of(repo))], cwd=repo, env=env, capture_output=True, text=True)
     assert p.returncode == 1 and "not installed" in p.stderr
+
+
+@pytest.mark.skipif(shutil.which("sh") is None, reason="needs a POSIX shell")
+def test_hook_survives_a_legacy_codepage_output_pipe(repo):
+    """Regression: on Windows, piped output used cp1252 and the scanner crashed on its own check
+    mark, so the hook returned exit 1 (block) for a CLEAN commit."""
+    runner.invoke(app, ["install-hook", str(repo)])
+    env = {**os.environ, "PYTHONIOENCODING": "cp1252",
+           "PATH": str(Path(sys.executable).parent) + os.pathsep + os.environ["PATH"]}
+    env.pop("PYTHONUTF8", None)
+    if shutil.which("aysal-scan", path=env["PATH"]) is None:
+        pytest.skip("aysal-scan console script is not on PATH")
+    (repo / "clean.txt").write_text("hello\n")
+    git(repo, "add", "clean.txt")
+    ok = subprocess.run(["sh", str(hook_of(repo))], cwd=repo, env=env, capture_output=True)
+    assert ok.returncode == 0, (ok.stdout + ok.stderr).decode("utf-8", "replace")
+    assert b"Traceback" not in ok.stderr

@@ -21,6 +21,7 @@ import re
 import shutil
 import stat
 import subprocess
+import sys
 import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -72,6 +73,28 @@ status = Console(stderr=True)
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+def _ensure_unicode_streams() -> None:
+    """Make stdout/stderr able to print the symbols used in reports (check marks, boxes, emoji).
+
+    When output is piped or redirected on Windows, Python encodes it with the legacy code page
+    (cp1252), which cannot represent them and used to crash the scan with UnicodeEncodeError.
+    Streams that cannot do UTF-8 are switched to it with replacement characters, so output can
+    never abort a scan.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        encoding = (getattr(stream, "encoding", None) or "").lower().replace("-", "").replace("_", "")
+        if encoding in ("utf8", "utf8sig"):
+            continue
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:
+            continue
+        try:
+            reconfigure(encoding="utf-8", errors="replace")
+        except (ValueError, OSError):
+            pass
+
+
 
 def _fail(message: str) -> "typer.Exit":
     status.print(f"[bold red]Error:[/bold red] {escape(message)}")
@@ -684,7 +707,31 @@ def _main(
     ),
 ) -> None:
     """Find leaked secrets in git repositories and measure what each one can access."""
+    _ensure_unicode_streams()
+
+
+def main() -> None:
+    """Console-script entry point.
+
+    Anything unexpected becomes exit code 2 ("the scan could not run") with a one-line message,
+    never exit code 1, which means "secrets found". Set AYSAL_SCAN_DEBUG=1 to see the traceback.
+    """
+    _ensure_unicode_streams()
+    try:
+        app()
+    except KeyboardInterrupt:
+        status.print("[yellow]Interrupted.[/yellow]")
+        sys.exit(130)
+    except Exception as exc:  # noqa: BLE001 - last line of defence, deliberately broad
+        if os.environ.get("AYSAL_SCAN_DEBUG"):
+            raise
+        status.print(
+            f"[bold red]Error:[/bold red] unexpected {type(exc).__name__}: {escape(str(exc))}\n"
+            "[dim]The scan did not complete. Re-run with AYSAL_SCAN_DEBUG=1 for the full traceback "
+            "and please report it.[/dim]"
+        )
+        sys.exit(EXIT_ERROR)
 
 
 if __name__ == "__main__":
-    app()
+    main()
