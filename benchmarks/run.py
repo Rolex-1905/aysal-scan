@@ -1,7 +1,7 @@
 """Run one or more scanners over the labelled corpus and report precision / recall.
 
 Usage:
-    python benchmarks/run.py --aysal aysal-scan                # a v2 binary
+    python benchmarks/run.py --aysal aysal-scan                # this checkout's binary
     python benchmarks/run.py --aysal /path/to/v1/aysal-scan    # compare an older version
     python benchmarks/run.py --aysal aysal-scan --gitleaks gitleaks --trufflehog trufflehog
 
@@ -24,6 +24,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 import corpus  # noqa: E402
+import corpus_realistic  # noqa: E402
+
+CORPORA = {"synthetic": corpus, "realistic": corpus_realistic}
 
 
 def _aysal(binary: str, root: Path) -> set[str]:
@@ -77,13 +80,15 @@ def main() -> int:
     ap.add_argument("--aysal", action="append", default=[], help="path to an aysal-scan executable (repeatable)")
     ap.add_argument("--gitleaks")
     ap.add_argument("--trufflehog")
+    ap.add_argument("--corpus", choices=sorted(CORPORA), default="synthetic",
+                    help="synthetic: random look-alikes; realistic: structurally valid secrets (needs `cryptography`)")
     ap.add_argument("--seed", type=int, default=1905)
     ap.add_argument("--json", help="write full results here")
     args = ap.parse_args()
 
     root = Path(tempfile.mkdtemp(prefix="aysal-bench-")) / "corpus"
-    labels = corpus.build(root, args.seed)
-    print(f"corpus: {len(labels['positives'])} positive files, {len(labels['decoys'])} decoy files (seed {args.seed})\n")
+    labels = CORPORA[args.corpus].build(root, args.seed)
+    print(f"corpus '{args.corpus}': {len(labels['positives'])} positive files, {len(labels['decoys'])} decoy files (seed {args.seed})\n")
 
     runs = [(f"aysal-scan [{b}]", lambda b=b: _aysal(b, root)) for b in args.aysal]
     if args.gitleaks:

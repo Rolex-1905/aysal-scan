@@ -1,4 +1,4 @@
-"""Verification-engine regression tests (v1 audit): status handling, severity rules,
+"""Verification-engine regression tests (audit): status handling, severity rules,
 rate limiting, provider routing, risk scoring."""
 from __future__ import annotations
 

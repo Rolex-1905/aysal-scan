@@ -118,12 +118,14 @@ class Finding(BaseModel):
     masked_value: str
     blast_radius: Optional[BlastRadiusResult] = None
     locations: list[Location] = Field(default_factory=list)
-    # v2 additions (all optional so old JSON/consumers keep working)
+    # Added in 1.1 (all optional so existing JSON consumers keep working)
     rule_id: Optional[str] = None
     tags: list[str] = Field(default_factory=list)
     risk_score: Optional[int] = None
     risk_factors: list[str] = Field(default_factory=list)
     in_head: Optional[bool] = None
+    cwe: list[str] = Field(default_factory=list)
+    owasp: Optional[str] = None
 
 
 class ScanReport(BaseModel):
@@ -139,8 +141,8 @@ class ScanReport(BaseModel):
     total_low: int
     total_info: int
     passed: bool
-    # v2 additions
-    schema_version: str = "2"
+    # Added in 1.1
+    schema_version: str = "1.1"
     scan_root: Optional[str] = None
     files_skipped: int = 0
     warnings: list[str] = Field(default_factory=list)

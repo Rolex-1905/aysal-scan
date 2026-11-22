@@ -273,6 +273,11 @@ def register_custom_patterns(patterns: list[SecretPattern]) -> None:
         _CUSTOM_PATTERNS.extend(patterns)
 
 
+def get_custom_patterns() -> list[SecretPattern]:
+    with _custom_lock:
+        return list(_CUSTOM_PATTERNS)
+
+
 def get_all_patterns() -> list[SecretPattern]:
     with _custom_lock:
         return PATTERNS + list(_CUSTOM_PATTERNS)

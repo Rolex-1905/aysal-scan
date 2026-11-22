@@ -5,7 +5,7 @@ from aysal_scan.models import ScanReport
 
 
 def write_json_report(report: ScanReport, output_path: Path | None = None) -> str:
-    """Serialize the report to JSON (schema_version 2).
+    """Serialize the report to JSON (see ``schema_version``).
 
     If ``output_path`` is given the JSON is also written there (parent directories are
     created). The JSON string is always returned.

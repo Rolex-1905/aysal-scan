@@ -51,7 +51,7 @@ jobs:
         with:
           images: ghcr.io/rolex-1905/aysal-scan
           # 'latest=auto' tags latest ONLY for stable semver tags, never for pre-releases
-          # such as v2.0.0rc1, and never for an old tag that is re-pushed by accident.
+          # such as a release candidate, and never for an old tag that is re-pushed by accident.
           flavor: latest=auto
           tags: |
             type=semver,pattern={{version}}

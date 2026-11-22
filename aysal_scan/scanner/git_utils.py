@@ -1,6 +1,6 @@
 """Git-aware scanning: staged changes and commit history.
 
-Behaviour guarantees (v2)
+Behaviour guarantees
 -------------------------
 * Never fails open: a path that is not a git repository raises ``GitScanError``
   instead of returning "0 findings".
@@ -14,7 +14,9 @@ Behaviour guarantees (v2)
 """
 from __future__ import annotations
 
+import os
 import re
+import subprocess
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -161,7 +163,7 @@ def _iter_commits(repo: git.Repo, n_commits: Optional[int], all_refs: bool):
     """Return (commits oldest->newest, more_history_exists)."""
     try:
         if n_commits:
-            newest_first = list(repo.iter_commits(max_count=n_commits + 1))
+            newest_first = list(repo.iter_commits(max_count=n_commits + 1, topo_order=True))
             more = len(newest_first) > n_commits
             return list(reversed(newest_first[:n_commits])), more
         kwargs = {"all": True} if all_refs else {}
@@ -196,7 +198,7 @@ def _annotate_in_head(repo: git.Repo, findings: list[Finding], raw_values: dict[
         f.in_head = any(t is not None and needle in t for t in texts)
 
 
-def scan_commits_ex(
+def _scan_commits_gitpython(
     repo_path: Path,
     n_commits: Optional[int] = None,
     all_refs: bool = False,
@@ -267,6 +269,156 @@ def scan_commits_ex(
         return result
     finally:
         repo.close()
+
+
+# ---------------------------------------------------------------------------
+# Fast history backend: ONE `git log -p` stream instead of one diff per commit
+# ---------------------------------------------------------------------------
+
+class _FastPathUnavailable(Exception):
+    """The streaming backend cannot be used here; the caller falls back to GitPython."""
+
+
+_RECORD_START = "\x1e"
+_FIELD_SEP = "\x1f"
+_MIN_GIT = (2, 31)   # --diff-merges=first-parent
+
+
+def _git_version() -> tuple[int, int]:
+    try:
+        out = subprocess.run(["git", "--version"], capture_output=True, text=True, timeout=30).stdout
+    except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
+        raise _FastPathUnavailable(str(exc)) from exc
+    m = re.search(r"(\d+)\.(\d+)", out)
+    if not m:
+        raise _FastPathUnavailable(f"cannot parse git version: {out!r}")
+    return int(m.group(1)), int(m.group(2))
+
+
+def _accumulate(result: "HistoryResult", by_id: dict, findings: list, raw_values: dict,
+                commit_hash: str, commit_date: str) -> None:
+    """Merge one commit's findings: first sighting is primary, later ones become locations."""
+    for f in findings:
+        primary = by_id.get(f.id)
+        if primary is None:
+            by_id[f.id] = f
+            result.findings.append(f)
+            result.raw_values[f.id] = raw_values.get(f.id, "")
+            continue
+        same_as_primary = (
+            f.file_path == primary.file_path
+            and f.line_number == primary.line_number
+            and commit_hash == primary.commit_hash
+        )
+        known = {(l.file_path, l.line_number, l.commit_hash) for l in primary.locations}
+        if not same_as_primary and (f.file_path, f.line_number, commit_hash) not in known:
+            primary.locations.append(Location(
+                file_path=f.file_path, line_number=f.line_number,
+                commit_hash=commit_hash, commit_date=commit_date,
+            ))
+
+
+def _scan_commits_stream(
+    repo_path: Path, n_commits: Optional[int], all_refs: bool, max_seconds: Optional[float],
+) -> "HistoryResult":
+    if _git_version() < _MIN_GIT:
+        raise _FastPathUnavailable("git is older than 2.31")
+
+    repo = _open_repo(Path(repo_path))
+    result = HistoryResult()
+    try:
+        root = _repo_root(repo)
+        load_ignore_patterns_for_root(root)
+
+        # Empty repository: nothing to scan (and `git log` would error).
+        probe = ["git", "-C", str(root), "rev-parse", "--verify", "-q", "HEAD"]
+        if all_refs:
+            probe = ["git", "-C", str(root), "for-each-ref", "--count=1", "--format=%(objectname)"]
+        out = subprocess.run(probe, capture_output=True, text=True, timeout=60)
+        if (not all_refs and out.returncode != 0) or (all_refs and not out.stdout.strip()):
+            return result
+
+        cmd = ["git", "-C", str(root), "-c", "core.quotepath=false", "log", "--reverse",
+               "--topo-order", "-p", "-U0", "--no-color", "--no-ext-diff",
+               "--diff-merges=first-parent",
+               f"--format={_RECORD_START}%H{_FIELD_SEP}%cs"]
+        if n_commits:
+            cmd += ["-n", str(n_commits)]
+            total = subprocess.run(["git", "-C", str(root), "rev-list", "--count", "HEAD"],
+                                   capture_output=True, text=True, timeout=120).stdout.strip()
+            result.partial_history = total.isdigit() and int(total) > n_commits
+        elif all_refs:
+            cmd.append("--all")
+
+        env = {**os.environ, "GIT_TERMINAL_PROMPT": "0"}
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env)
+        by_id: dict[str, Finding] = {}
+        started = time.monotonic()
+        current: Optional[tuple[str, str]] = None
+        buffer: list[str] = []
+
+        def flush() -> None:
+            if current is None:
+                return
+            commit_hash, commit_date = current
+            result.commits_scanned += 1
+            for file_path, added in parse_multi_file_diff("\n".join(buffer)).items():
+                if not added:
+                    continue
+                result.files_changed += 1
+                if _should_skip(Path(file_path)):
+                    continue
+                findings, raw_values = _scan_added(file_path, added, commit_hash, commit_date)
+                _accumulate(result, by_id, findings, raw_values, commit_hash, commit_date)
+
+        timed_out = False
+        assert proc.stdout is not None
+        for raw_line in proc.stdout:
+            line = raw_line.decode("utf-8", errors="replace").rstrip("\n").rstrip("\r")
+            if line.startswith(_RECORD_START):
+                flush()
+                sha, _, date = line[1:].partition(_FIELD_SEP)
+                current, buffer = (sha[:7], date), []
+                if max_seconds is not None and time.monotonic() - started > max_seconds:
+                    timed_out = True
+                    proc.kill()
+                    break
+            else:
+                buffer.append(line)
+        else:
+            flush()
+
+        err = proc.stderr.read().decode("utf-8", errors="replace") if proc.stderr else ""
+        proc.wait()
+        if timed_out:
+            result.partial_history = True
+            result.warnings.append(
+                f"Stopped after {max_seconds:.0f}s; newer commits were not scanned (oldest-first order)."
+            )
+        elif proc.returncode != 0:
+            raise _FastPathUnavailable(f"git log failed ({proc.returncode}): {err.strip()[:200]}")
+
+        _annotate_in_head(repo, result.findings, result.raw_values)
+        return result
+    finally:
+        repo.close()
+
+
+def scan_commits_ex(
+    repo_path: Path,
+    n_commits: Optional[int] = None,
+    all_refs: bool = False,
+    max_seconds: Optional[float] = None,
+) -> "HistoryResult":
+    """Scan commit history (oldest first). Uses a single streaming ``git log -p`` when possible
+    and falls back to the GitPython implementation otherwise. Set the environment variable
+    ``AYSAL_SCAN_GIT_BACKEND=gitpython`` to force the fallback."""
+    if os.environ.get("AYSAL_SCAN_GIT_BACKEND", "").lower() != "gitpython":
+        try:
+            return _scan_commits_stream(Path(repo_path), n_commits, all_refs, max_seconds)
+        except _FastPathUnavailable:
+            pass
+    return _scan_commits_gitpython(Path(repo_path), n_commits, all_refs, max_seconds)
 
 
 def scan_commits(repo_path: Path, n_commits: Optional[int] = None, all_refs: bool = False):
