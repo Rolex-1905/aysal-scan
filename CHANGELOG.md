@@ -46,8 +46,9 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **Crash when output is piped or redirected on Windows.** Python encodes piped output with the legacy code
   page (cp1252), which cannot represent the check mark, box and emoji characters in reports, so the scan died
   with `UnicodeEncodeError`. A pre-commit hook run by an editor that captures its output then blocked every
-  commit, even clean ones. stdout/stderr are now switched to UTF-8 (with replacement characters) when they
-  cannot encode the report.
+  commit, even clean ones. Each stream now keeps its own encoding and only the characters it cannot encode are
+  replaced with readable ASCII (`OK`, `X`, `!`); Rich switches to ASCII boxes on such streams. UTF-8 streams are
+  unchanged, and file names containing invalid bytes no longer crash UTF-8 output either.
 - An unexpected internal error used to exit with code 1, indistinguishable from "secrets found". The console
   command now exits **2** ("the scan could not run") with a one-line message; `AYSAL_SCAN_DEBUG=1` shows the
   traceback. `Ctrl+C` exits 130.

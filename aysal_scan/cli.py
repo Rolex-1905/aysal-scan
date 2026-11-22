@@ -52,6 +52,7 @@ from aysal_scan.scanner.file_scanner import (
     scan_file,
 )
 from aysal_scan.scanner.git_utils import GitScanError, scan_commits_ex, scan_staged
+from aysal_scan.safe_output import install as _make_streams_safe
 from aysal_scan.scanner.patterns import register_custom_patterns
 from aysal_scan.scoring import apply_scores
 
@@ -73,28 +74,6 @@ status = Console(stderr=True)
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-def _ensure_unicode_streams() -> None:
-    """Make stdout/stderr able to print the symbols used in reports (check marks, boxes, emoji).
-
-    When output is piped or redirected on Windows, Python encodes it with the legacy code page
-    (cp1252), which cannot represent them and used to crash the scan with UnicodeEncodeError.
-    Streams that cannot do UTF-8 are switched to it with replacement characters, so output can
-    never abort a scan.
-    """
-    for stream in (sys.stdout, sys.stderr):
-        encoding = (getattr(stream, "encoding", None) or "").lower().replace("-", "").replace("_", "")
-        if encoding in ("utf8", "utf8sig"):
-            continue
-        reconfigure = getattr(stream, "reconfigure", None)
-        if reconfigure is None:
-            continue
-        try:
-            reconfigure(encoding="utf-8", errors="replace")
-        except (ValueError, OSError):
-            pass
-
-
 
 def _fail(message: str) -> "typer.Exit":
     status.print(f"[bold red]Error:[/bold red] {escape(message)}")
@@ -707,7 +686,7 @@ def _main(
     ),
 ) -> None:
     """Find leaked secrets in git repositories and measure what each one can access."""
-    _ensure_unicode_streams()
+    _make_streams_safe()
 
 
 def main() -> None:
@@ -716,7 +695,7 @@ def main() -> None:
     Anything unexpected becomes exit code 2 ("the scan could not run") with a one-line message,
     never exit code 1, which means "secrets found". Set AYSAL_SCAN_DEBUG=1 to see the traceback.
     """
-    _ensure_unicode_streams()
+    _make_streams_safe()
     try:
         app()
     except KeyboardInterrupt:
